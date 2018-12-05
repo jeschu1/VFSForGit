@@ -295,7 +295,7 @@ namespace GVFS.Common.Git
                     : new ConfigResult(this.InvokeGitOutsideEnlistment(command), settingName);
         }
 
-        public ConfigResult GetFromLocalConfig(string settingName)
+        public virtual ConfigResult GetFromLocalConfig(string settingName)
         {
             return new ConfigResult(this.InvokeGitAgainstDotGitFolder("config --local " + settingName), settingName);
         }

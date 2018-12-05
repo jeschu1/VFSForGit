@@ -229,6 +229,16 @@ namespace GVFS.Common
             return this.GetId(GVFSConstants.GitConfig.EnlistmentId);
         }
 
+        protected virtual GitProcess GetGitProcess()
+        {
+            if (this.gitProcess == null)
+            {
+                this.gitProcess = new GitProcess(this);
+            }
+
+            return this.gitProcess;
+        }
+
         private void SetOnce<T>(T value, ref T valueToSet)
         {
             if (valueToSet != null)
@@ -261,16 +271,6 @@ namespace GVFS.Common
             }
 
             return string.Empty;
-        }
-
-        private GitProcess GetGitProcess()
-        {
-            if (this.gitProcess == null)
-            {
-                this.gitProcess = new GitProcess(this);
-            }
-
-            return this.gitProcess;
         }
     }
 }
