@@ -255,7 +255,7 @@ namespace GVFS.Common
             GitProcess.ConfigResult configResult = this.GetGitProcess().GetFromLocalConfig(key);
             string value;
             string error;
-            if (!configResult.TryParseAsString(out value, out error, defaultValue: string.Empty))
+            if (configResult.TryParseAsString(out value, out error, defaultValue: string.Empty))
             {
                 return value.Trim();
             }
