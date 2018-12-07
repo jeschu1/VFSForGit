@@ -54,14 +54,21 @@ namespace GVFS.Common.Maintenance
                     state: null,
                     dueTime: prefetchPeriod,
                     period: prefetchPeriod));
-
-                TimeSpan looseObjectsPeriod = TimeSpan.FromHours(12);
-                this.stepTimers.Add(new Timer(
-                    (state) => this.queue.TryEnqueue(new LooseObjectsStep(this.context, requireCacheLock: true)),
-                    state: null,
-                    dueTime: looseObjectsPeriod,
-                    period: looseObjectsPeriod));
             }
+
+            TimeSpan looseObjectsPeriod = TimeSpan.FromHours(12);
+            this.stepTimers.Add(new Timer(
+                (state) => this.queue.TryEnqueue(new LooseObjectsStep(this.context, requireCacheLock: true)),
+                state: null,
+                dueTime: looseObjectsPeriod,
+                period: looseObjectsPeriod));
+
+            TimeSpan packPeriod = TimeSpan.FromMinutes(1);
+            this.stepTimers.Add(new Timer(
+                (state) => this.queue.TryEnqueue(new GitPackMaintenanceStep(this.context, this.gitObjects)),
+                state: null,
+                dueTime: TimeSpan.FromSeconds(10),
+                period: packPeriod));
         }
     }
 }

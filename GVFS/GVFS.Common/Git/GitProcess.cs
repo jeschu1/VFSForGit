@@ -417,6 +417,16 @@ namespace GVFS.Common.Git
             return this.InvokeGitAgainstDotGitFolder("-c core.multiPackIndex=true multi-pack-index write --object-dir=\"" + objectDir + "\"");
         }
 
+        public Result ExpireMultiPackIndex(string objectDir)
+        {
+            return this.InvokeGitAgainstDotGitFolder("-c core.multiPackIndex=true multi-pack-index expire --object-dir=\"" + objectDir + "\"");
+        }
+
+        public Result RepackMultiPackIndex(string objectDir, uint batchSizeInMB)
+        {
+            return this.InvokeGitAgainstDotGitFolder("-c core.multiPackIndex=true multi-pack-index repack --pack-size=" + batchSizeInMB + "m --object-dir=\"" + objectDir + "\"");
+        }
+
         public Result RemoteAdd(string remoteName, string url)
         {
             return this.InvokeGitAgainstDotGitFolder("remote add " + remoteName + " " + url);
