@@ -17,6 +17,7 @@ namespace GVFS.UnitTests.Maintenance
     public class LooseObjectStepTests
     {
         private const string PrunePackedCommand = "prune-packed -q";
+        private const string PackCommand = "pack-objects";
         private MockTracer tracer;
         private MockGitProcess gitProcess;
         private GVFSContext context;
@@ -32,8 +33,9 @@ namespace GVFS.UnitTests.Maintenance
             this.tracer.StartActivityTracer.RelatedErrorEvents.Count.ShouldEqual(0);
             this.tracer.StartActivityTracer.RelatedWarningEvents.Count.ShouldEqual(0);
             List<string> commands = this.gitProcess.CommandsRun;
-            commands.Count.ShouldEqual(1);
+            commands.Count.ShouldEqual(2);
             commands[0].ShouldEqual(PrunePackedCommand);
+            commands[1].ShouldContain(PackCommand);
         }
 
         [TestCase]
@@ -61,8 +63,9 @@ namespace GVFS.UnitTests.Maintenance
             this.tracer.StartActivityTracer.RelatedErrorEvents.Count.ShouldEqual(0);
             this.tracer.StartActivityTracer.RelatedWarningEvents.Count.ShouldEqual(0);
             List<string> commands = this.gitProcess.CommandsRun;
-            commands.Count.ShouldEqual(1);
+            commands.Count.ShouldEqual(2);
             commands[0].ShouldEqual(PrunePackedCommand);
+            commands[1].ShouldContain(PackCommand);
         }
 
         [TestCase]
