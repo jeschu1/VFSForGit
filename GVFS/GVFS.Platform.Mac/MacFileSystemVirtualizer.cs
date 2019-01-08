@@ -355,13 +355,11 @@ namespace GVFS.Platform.Mac
                 metadata.Add(nameof(sha), sha);
                 metadata.Add(nameof(placeholderVersion), placeholderVersion);
                 metadata.Add(nameof(commandId), commandId);
-                ITracer activity = this.Context.Tracer.StartActivity("GetFileStream", EventLevel.Verbose, Keywords.Telemetry, metadata);
 
                 if (!this.FileSystemCallbacks.IsMounted)
                 {
                     metadata.Add(TracingConstants.MessageKey.InfoMessage, $"{nameof(this.OnGetFileStream)} failed, mount has not yet completed");
-                    activity.RelatedEvent(EventLevel.Informational, $"{nameof(this.OnGetFileStream)}_MountNotComplete", metadata);
-                    activity.Dispose();
+                    this.Context.Tracer.RelatedEvent(EventLevel.Informational, $"{nameof(this.OnGetFileStream)}_MountNotComplete", metadata);
 
                     // TODO(Mac): Is this the correct Result to return?
                     return Result.EIOError;
@@ -369,8 +367,7 @@ namespace GVFS.Platform.Mac
 
                 if (placeholderVersion != FileSystemVirtualizer.PlaceholderVersion)
                 {
-                    activity.RelatedError(metadata, nameof(this.OnGetFileStream) + ": Unexpected placeholder version");
-                    activity.Dispose();
+                    this.Context.Tracer.RelatedError(metadata, nameof(this.OnGetFileStream) + ": Unexpected placeholder version");
 
                     // TODO(Mac): Is this the correct Result to return?
                     return Result.EIOError;
@@ -403,7 +400,7 @@ namespace GVFS.Platform.Mac
                                     bufferIndex);
                                 if (result != Result.Success)
                                 {
-                                    activity.RelatedError(metadata, $"{nameof(this.virtualizationInstance.WriteFileContents)} failed, error: " + result.ToString("X") + "(" + result.ToString("G") + ")");
+                                    this.Context.Tracer.RelatedError(metadata, $"{nameof(this.virtualizationInstance.WriteFileContents)} failed, error: " + result.ToString("X") + "(" + result.ToString("G") + ")");
                                     throw new GetFileStreamException(result);
                                 }
 
@@ -414,7 +411,7 @@ namespace GVFS.Platform.Mac
                             }
                         }))
                     {
-                        activity.RelatedError(metadata, $"{nameof(this.OnGetFileStream)}: TryCopyBlobContentStream failed");
+                        this.Context.Tracer.RelatedError(metadata, $"{nameof(this.OnGetFileStream)}: TryCopyBlobContentStream failed");
 
                         // TODO(Mac): Is this the correct Result to return?
                         return Result.EFileNotFound;
