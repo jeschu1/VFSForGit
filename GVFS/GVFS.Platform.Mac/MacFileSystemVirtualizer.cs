@@ -349,15 +349,9 @@ namespace GVFS.Platform.Mac
                 string sha = GetShaFromContentId(contentId);
                 byte placeholderVersion = GetPlaceholderVersionFromProviderId(providerId);
 
-                EventMetadata metadata = this.CreateEventMetadata(relativePath);
-                metadata.Add(nameof(triggeringProcessId), triggeringProcessId);
-                metadata.Add(nameof(triggeringProcessName), triggeringProcessName);
-                metadata.Add(nameof(sha), sha);
-                metadata.Add(nameof(placeholderVersion), placeholderVersion);
-                metadata.Add(nameof(commandId), commandId);
-
                 if (!this.FileSystemCallbacks.IsMounted)
                 {
+                    EventMetadata metadata = this.CreateEventMetadata(commandId, relativePath, triggeringProcessId, triggeringProcessName, sha, placeholderVersion);
                     metadata.Add(TracingConstants.MessageKey.InfoMessage, $"{nameof(this.OnGetFileStream)} failed, mount has not yet completed");
                     this.Context.Tracer.RelatedEvent(EventLevel.Informational, $"{nameof(this.OnGetFileStream)}_MountNotComplete", metadata);
 
@@ -367,6 +361,7 @@ namespace GVFS.Platform.Mac
 
                 if (placeholderVersion != FileSystemVirtualizer.PlaceholderVersion)
                 {
+                    EventMetadata metadata = this.CreateEventMetadata(commandId, relativePath, triggeringProcessId, triggeringProcessName, sha, placeholderVersion);
                     this.Context.Tracer.RelatedError(metadata, nameof(this.OnGetFileStream) + ": Unexpected placeholder version");
 
                     // TODO(Mac): Is this the correct Result to return?
@@ -400,6 +395,7 @@ namespace GVFS.Platform.Mac
                                     bufferIndex);
                                 if (result != Result.Success)
                                 {
+                                    EventMetadata metadata = this.CreateEventMetadata(commandId, relativePath, triggeringProcessId, triggeringProcessName, sha, placeholderVersion);
                                     this.Context.Tracer.RelatedError(metadata, $"{nameof(this.virtualizationInstance.WriteFileContents)} failed, error: " + result.ToString("X") + "(" + result.ToString("G") + ")");
                                     throw new GetFileStreamException(result);
                                 }
@@ -411,6 +407,7 @@ namespace GVFS.Platform.Mac
                             }
                         }))
                     {
+                        EventMetadata metadata = this.CreateEventMetadata(commandId, relativePath, triggeringProcessId, triggeringProcessName, sha, placeholderVersion);
                         this.Context.Tracer.RelatedError(metadata, $"{nameof(this.OnGetFileStream)}: TryCopyBlobContentStream failed");
 
                         // TODO(Mac): Is this the correct Result to return?
@@ -434,6 +431,23 @@ namespace GVFS.Platform.Mac
             }
 
             return Result.EIOError;
+        }
+
+        private EventMetadata CreateEventMetadata(
+            ulong commandId,
+            string relativePath,
+            int triggeringProcessId,
+            string triggeringProcessName,
+            string sha,
+            byte placeholderVersion)
+        {
+            EventMetadata metadata = this.CreateEventMetadata(relativePath);
+            metadata.Add(nameof(triggeringProcessId), triggeringProcessId);
+            metadata.Add(nameof(triggeringProcessName), triggeringProcessName);
+            metadata.Add(nameof(sha), sha);
+            metadata.Add(nameof(placeholderVersion), placeholderVersion);
+            metadata.Add(nameof(commandId), commandId);
+            return metadata;
         }
 
         private void OnFileModified(string relativePath)
