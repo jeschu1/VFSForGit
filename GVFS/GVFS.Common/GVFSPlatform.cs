@@ -3,6 +3,7 @@ using GVFS.Common.Git;
 using GVFS.Common.Tracing;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 
@@ -58,6 +59,9 @@ namespace GVFS.Common
         public abstract Dictionary<string, string> GetPhysicalDiskInfo(string path, bool sizeStatsOnly);
 
         public abstract bool IsConsoleOutputRedirectedToFile();
+
+        public abstract bool KillProcessTree(Process process);
+
         public abstract bool TryGetGVFSEnlistmentRoot(string directory, out string enlistmentRoot, out string errorMessage);
 
         public abstract bool IsGitStatusCacheSupported();

@@ -7,6 +7,7 @@ using GVFS.UnitTests.Mock.FileSystem;
 using GVFS.UnitTests.Mock.Git;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO.Pipes;
 
 namespace GVFS.UnitTests.Mock.Common
@@ -121,6 +122,11 @@ namespace GVFS.UnitTests.Mock.Common
         public override FileBasedLock CreateFileBasedLock(PhysicalFileSystem fileSystem, ITracer tracer, string lockPath)
         {
             return new MockFileBasedLock(fileSystem, tracer, lockPath);
+        }
+
+        public override bool KillProcessTree(Process process)
+        {
+            return true;
         }
     }
 }

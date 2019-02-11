@@ -4,6 +4,7 @@ using GVFS.Common.Git;
 using GVFS.Common.Tracing;
 using GVFS.Platform.Windows.DiskLayoutUpgrades;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -12,6 +13,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Linq;
 using System.Management.Automation;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.ServiceProcess;
@@ -332,6 +334,41 @@ namespace GVFS.Platform.Windows
             return WindowsPlatform.TryGetGVFSEnlistmentRootImplementation(directory, out enlistmentRoot, out errorMessage);
         }
 
+        public override bool KillProcessTree(Process process)
+        {
+            using (SafeHandle processHandle = NativeMethods.OpenProcess(NativeMethods.ProcessAccessFlags.All, false, process.Id))
+            {
+                if (!processHandle.IsInvalid)
+                {
+                    JobHandle jobHandle = new JobHandle("Kill job");
+                    if (jobHandle.IsInvalid)
+                    {
+                        throw new Exception();
+                    }
+
+                    if (!AssignProcessToJobObject(jobHandle, processHandle))
+                    {
+                        throw new Exception();
+                    }
+
+                    return TerminateJobObject(jobHandle, 1);
+                }
+
+                return false;
+            }
+
+            /*
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "taskkill",
+                Arguments = $"/im boo /f /t",
+                CreateNoWindow = true,
+                UseShellExecute = false
+            }).WaitForExit();
+            */
+
+        }
+
         private static object GetValueFromRegistry(RegistryHive registryHive, string key, string valueName, RegistryView view)
         {
             RegistryKey localKey = RegistryKey.OpenBaseKey(registryHive, view);
@@ -339,6 +376,25 @@ namespace GVFS.Platform.Windows
 
             object value = localKeySub == null ? null : localKeySub.GetValue(valueName);
             return value;
+        }
+
+        private class JobHandle : SafeHandle
+        {
+            public JobHandle(string jobName)
+                : base(IntPtr.Zero, true)
+            {
+                base.SetHandle(CreateJobObject(IntPtr.Zero, jobName));
+            }
+
+            public override bool IsInvalid
+            {
+                get { return base.handle == IntPtr.Zero; }
+            }
+
+            protected override bool ReleaseHandle()
+            {
+                return true;
+            }
         }
     }
 }

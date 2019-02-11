@@ -99,6 +99,15 @@ namespace GVFS.Platform.Windows
         }
 
         [DllImport("kernel32.dll")]
+        private static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool TerminateJobObject(SafeHandle hJob, uint uExitCode);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool AssignProcessToJobObject(SafeHandle hJob, SafeHandle hProcess);
+
+        [DllImport("kernel32.dll")]
         private static extern IntPtr GetStdHandle(StdHandle std);
 
         [DllImport("kernel32.dll")]

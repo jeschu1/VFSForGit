@@ -4,6 +4,7 @@ using GVFS.Common.Git;
 using GVFS.Common.Tracing;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 
@@ -158,6 +159,11 @@ namespace GVFS.Platform.Mac
             string lockPath)
         {
             return new MacFileBasedLock(fileSystem, tracer, lockPath);
+        }
+
+        public override bool KillProcessTree(Process process)
+        {
+            throw new NotImplementedException();
         }
     }
 }

@@ -138,7 +138,9 @@ namespace GVFS.Common.Git
 
                     if (process != null)
                     {
-                        process.WaitForExit();
+                        GVFSPlatform.Instance.KillProcessTree(process);
+
+                        // process.WaitForExit();
                     }
 
                     return true;
