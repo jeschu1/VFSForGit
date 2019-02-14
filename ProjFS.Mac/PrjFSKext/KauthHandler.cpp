@@ -501,6 +501,27 @@ static int HandleVnodeOperation(
                     goto CleanupAndReturn;
                 }
             }
+            
+            if (ActionBitIsSet(action, KAUTH_VNODE_WRITE_DATA))
+            {
+                PerfSample enumerateDirectorySample(&perfTracer, PrjFSPerfCounter_VnodeOp_PreConvertToFull);
+                
+                /*
+                if (!TrySendRequestAndWaitForResponse(
+                                                      root,
+                                                      MessageType_KtoU_NotifyPreConvertToFull,
+                                                      currentVnode,
+                                                      vnodeFsidInode,
+                                                      vnodePath,
+                                                      pid,
+                                                      procname,
+                                                      &kauthResult,
+                                                      kauthError))
+                {
+                    goto CleanupAndReturn;
+                }
+                 */
+            }
         }
     }
     
@@ -711,6 +732,8 @@ static int HandleFileOpOperation(
         {
             goto CleanupAndReturn;
         }
+        
+        KextLog_Error("Modified: %s", path);
         
         char procname[MAXCOMLEN + 1];
         proc_name(pid, procname, MAXCOMLEN + 1);

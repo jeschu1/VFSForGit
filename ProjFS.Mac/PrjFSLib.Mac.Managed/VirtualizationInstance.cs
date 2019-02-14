@@ -15,6 +15,7 @@ namespace PrjFSLib.Mac
         public virtual GetFileStreamCallback OnGetFileStream { get; set; }
 
         public virtual NotifyFileModified OnFileModified { get; set; }
+        public virtual NotifyFilePreConvertToFullEvent OnFilePreConvertToFull { get; set; }
         public virtual NotifyPreDeleteEvent OnPreDelete { get; set; }
         public virtual NotifyNewFileCreatedEvent OnNewFileCreated { get; set; }
         public virtual NotifyFileRenamedEvent OnFileRenamed { get; set; }
@@ -203,6 +204,10 @@ namespace PrjFSLib.Mac
 
                 case NotificationType.HardLinkCreated:
                     this.OnHardLinkCreated(relativePath);
+                    return Result.Success;
+
+                case NotificationType.PreConvertToFull:
+                    this.OnFilePreConvertToFull(relativePath);
                     return Result.Success;
             }
 

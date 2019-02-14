@@ -973,7 +973,7 @@ static PrjFS_Result HandleFileNotification(
     
     PrjFSFileXAttrData xattrData = {};
     bool partialFile = TryGetXAttr(fullPath, PrjFSFileXAttrName, sizeof(PrjFSFileXAttrData), &xattrData);
-
+    
     PrjFS_Result result = s_callbacks.NotifyOperation(
         0 /* commandId */,
         relativePath,
@@ -1177,6 +1177,9 @@ static inline PrjFS_NotificationType KUMessageTypeToNotificationType(MessageType
         case MessageType_KtoU_NotifyFilePreDelete:
         case MessageType_KtoU_NotifyDirectoryPreDelete:
             return PrjFS_NotificationType_PreDelete;
+
+        case MessageType_KtoU_NotifyPreConvertToFull:
+            return PrjFS_NotificationType_PreConvertToFull;
             
         case MessageType_KtoU_NotifyFileCreated:
             return PrjFS_NotificationType_NewFileCreated;

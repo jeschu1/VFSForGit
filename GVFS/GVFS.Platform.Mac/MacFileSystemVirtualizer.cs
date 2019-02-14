@@ -218,6 +218,7 @@ namespace GVFS.Platform.Mac
             this.virtualizationInstance.OnNewFileCreated = this.OnNewFileCreated;
             this.virtualizationInstance.OnFileRenamed = this.OnFileRenamed;
             this.virtualizationInstance.OnHardLinkCreated = this.OnHardLinkCreated;
+            this.virtualizationInstance.OnFilePreConvertToFull = this.OnFilePreConvertToFull;
 
             uint threadCount = (uint)Environment.ProcessorCount * 2;
 
@@ -455,10 +456,27 @@ namespace GVFS.Platform.Mac
                 {
                     this.OnDotGitFileOrFolderChanged(relativePath);
                 }
-                else
+            }
+            catch (Exception e)
+            {
+                this.LogUnhandledExceptionAndExit(nameof(this.OnFileModified), this.CreateEventMetadata(relativePath, e));
+            }
+        }
+
+        private Result OnFilePreConvertToFull(string relativePath)
+        {
+            try
+            {
+                if (!this.FileSystemCallbacks.IsMounted)
                 {
-                    // TODO(Mac): As a temporary work around (until we have a ConvertToFull type notification) treat every modification
-                    // as the first write to the file
+                    EventMetadata metadata = this.CreateEventMetadata(relativePath);
+                    metadata.Add(TracingConstants.MessageKey.InfoMessage, nameof(this.OnFilePreConvertToFull) + ": Mount has not yet completed");
+                    this.Context.Tracer.RelatedEvent(EventLevel.Informational, $"{nameof(this.OnFilePreConvertToFull)}_MountNotComplete", metadata);
+                    return Result.EIOError;
+                }
+
+                if (Virtualization.FileSystemCallbacks.IsPathInsideDotGit(relativePath))
+                {
                     bool isFolder;
                     string fileName;
                     bool isPathProjected = this.FileSystemCallbacks.GitIndexProjection.IsPathProjected(relativePath, out fileName, out isFolder);
@@ -470,8 +488,10 @@ namespace GVFS.Platform.Mac
             }
             catch (Exception e)
             {
-                this.LogUnhandledExceptionAndExit(nameof(this.OnFileModified), this.CreateEventMetadata(relativePath, e));
+                this.LogUnhandledExceptionAndExit(nameof(this.OnFilePreConvertToFull), this.CreateEventMetadata(relativePath, e));
             }
+
+            return Result.Success;
         }
 
         private Result OnPreDelete(string relativePath, bool isDirectory)
