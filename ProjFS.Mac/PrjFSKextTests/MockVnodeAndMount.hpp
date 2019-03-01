@@ -43,6 +43,8 @@ private:
     
     std::string path;
     const char* name;
+    int attr = 0;
+    int vnodeGetAttrReturnCode = 0;
     
     void SetPath(const std::string& path);
 
@@ -58,6 +60,8 @@ public:
     
     uint64_t GetInode() const { return this->inode; }
     uint32_t GetVid() const { return this->vid; }
+    void SetAttr(int attr);
+    void SetGetAttrReturnCode(int code);
     void SetGetPathError(errno_t error);
     void StartRecycling();
 
@@ -68,6 +72,7 @@ public:
     friend mount_t vnode_mount(vnode_t vnode);
     friend int vnode_get(vnode_t vnode);
     friend int vnode_put(vnode_t vnode);
+    friend int vnode_getattr(vnode_t vp, struct vnode_attr *vap, vfs_context_t ctx);
     friend errno_t vnode_lookup(const char* path, int flags, vnode_t* foundVnode, vfs_context_t vfsContext);
     friend int vn_getpath(vnode_t vnode, char* pathBuffer, int* pathLengthInOut);
     friend FsidInode Vnode_GetFsidAndInode(vnode_t vnode, vfs_context_t vfsContext);
