@@ -14,6 +14,7 @@
 #include "MockProc.hpp"
 
 using std::shared_ptr;
+using KextMock::_;
 
 class PrjFSProviderUserClient
 {
@@ -113,7 +114,18 @@ bool ProviderMessaging_TrySendRequestAndWaitForResponse(
         reinterpret_cast<uintptr_t>(testFileVnode.get()),
         0,
         0);
-    XCTAssertTrue(MockCalls::DidCallFunction(ProviderMessaging_TrySendRequestAndWaitForResponse));
+    XCTAssertTrue(
+        MockCalls::DidCallFunction(
+            ProviderMessaging_TrySendRequestAndWaitForResponse,
+            _,
+            MessageType_KtoU_HydrateFile,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _));
 }
 
 - (void) testReadDataFileHydrated {
