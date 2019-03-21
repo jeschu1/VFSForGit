@@ -54,38 +54,55 @@ bool ProviderMessaging_TrySendRequestAndWaitForResponse(
 @end
 
 @implementation HandleVnodeOperationTests
-
-- (void) tearDown
 {
-    MockVnodes_CheckAndClear();
+    vfs_context_t context;
+    const char* repoPath;
+    const char* filePath;
+    const char* dirPath;
+    PrjFSProviderUserClient dummyClient;
+    pid_t dummyClientPid;
+    shared_ptr<mount> testMount;
+    shared_ptr<vnode> repoRootVnode;
+    shared_ptr<vnode> testFileVnode;
+    shared_ptr<vnode> testDirVnode;
 }
 
-- (void)testHandleVnodeOpEvent {
-    // Setup
+- (void) setUp
+{
     kern_return_t initResult = VirtualizationRoots_Init();
     XCTAssertEqual(initResult, KERN_SUCCESS);
-
-    // Parameters
-    const char* repoPath = "/Users/test/code/Repo";
-    const char* filePath = "/Users/test/code/Repo/file";
-    const char* dirPath = "/Users/test/code/Repo/dir";
-    vfs_context_t _Nonnull context = vfs_context_create(NULL);
-    //PerfTracer perfTracer;
-    PrjFSProviderUserClient dummyClient;
-    pid_t dummyClientPid=100;
+    context = vfs_context_create(NULL);
+    dummyClientPid = 100;
 
     // Create Vnode Tree
-    shared_ptr<mount> testMount = mount::Create();
-    shared_ptr<vnode> repoRootVnode = testMount->CreateVnodeTree(repoPath, VDIR);
-    shared_ptr<vnode> testFileVnode = testMount->CreateVnodeTree(filePath);
-    shared_ptr<vnode> testDirVnode = testMount->CreateVnodeTree(dirPath, VDIR);
+    repoPath = "/Users/test/code/Repo";
+    filePath = "/Users/test/code/Repo/file";
+    dirPath = "/Users/test/code/Repo/dir";
+    testMount = mount::Create();
+    repoRootVnode = testMount->CreateVnodeTree(repoPath, VDIR);
+    testFileVnode = testMount->CreateVnodeTree(filePath);
+    testDirVnode = testMount->CreateVnodeTree(dirPath, VDIR);
 
     // Register provider for the repository path (Simulate a mount)
     VirtualizationRootResult result = VirtualizationRoot_RegisterProviderForPath(&dummyClient, dummyClientPid, repoPath);
     XCTAssertEqual(result.error, 0);
     vnode_put(s_virtualizationRoots[result.root].rootVNode);
-    
-    // Read a file that has not been hydrated yet
+}
+
+- (void) tearDown
+{
+    testMount.reset();
+    repoRootVnode.reset();
+    testFileVnode.reset();
+    testDirVnode.reset();
+    VirtualizationRoots_Cleanup();
+    vfs_context_rele(context);
+    MockVnodes_CheckAndClear();
+    MockCalls::Clear();
+    callCount = 0;
+}
+
+- (void) testReadDataFileEmpty {
     expectedMessageType[0] = MessageType_KtoU_HydrateFile;
     testFileVnode->attrValues.va_flags = FileFlags_IsEmpty | FileFlags_IsInVirtualizationRoot;
     HandleVnodeOperation(
@@ -97,10 +114,9 @@ bool ProviderMessaging_TrySendRequestAndWaitForResponse(
         0,
         0);
     XCTAssertTrue(MockCalls::DidCallFunction(ProviderMessaging_TrySendRequestAndWaitForResponse));
-    MockCalls::Clear();
-    callCount = 0;
+}
 
-    // Ensure a file without an IsEmpty tag is not hydrated
+- (void) testReadDataFileHydrated {
     testFileVnode->attrValues.va_flags = FileFlags_IsInVirtualizationRoot;
     HandleVnodeOperation(
         nullptr,
@@ -111,9 +127,9 @@ bool ProviderMessaging_TrySendRequestAndWaitForResponse(
         0,
         0);
     XCTAssertFalse(MockCalls::DidCallFunction(ProviderMessaging_TrySendRequestAndWaitForResponse));
-    MockCalls::Clear();
+}
 
-    // Ensure a file is Deleted
+- (void) testDeleteFile {
     expectedMessageType[0] = MessageType_KtoU_NotifyFilePreDelete;
     testFileVnode->attrValues.va_flags = FileFlags_IsInVirtualizationRoot;
     HandleVnodeOperation(
@@ -125,10 +141,9 @@ bool ProviderMessaging_TrySendRequestAndWaitForResponse(
         0,
         0);
     XCTAssertTrue(MockCalls::DidCallFunction(ProviderMessaging_TrySendRequestAndWaitForResponse));
-    MockCalls::Clear();
-    callCount = 0;
+}
 
-    // Ensure a directory is Deleted
+- (void) testDeleteDir {
     expectedMessageType[0] = MessageType_KtoU_NotifyDirectoryPreDelete;
     expectedMessageType[1] = MessageType_KtoU_RecursivelyEnumerateDirectory;
     testDirVnode->attrValues.va_flags = FileFlags_IsInVirtualizationRoot;
@@ -141,12 +156,27 @@ bool ProviderMessaging_TrySendRequestAndWaitForResponse(
         0,
         0);
     XCTAssertTrue(MockCalls::DidCallFunction(ProviderMessaging_TrySendRequestAndWaitForResponse));
-    MockCalls::Clear();
-    callCount = 0;
-
-    // Teardown
-    VirtualizationRoots_Cleanup();
-    vfs_context_rele(context);
 }
 
+/*
+Is Directory
+                KAUTH_VNODE_LIST_DIRECTORY |
+                KAUTH_VNODE_SEARCH |
+                KAUTH_VNODE_READ_SECURITY |
+                KAUTH_VNODE_READ_ATTRIBUTES |
+                KAUTH_VNODE_READ_EXTATTRIBUTES |
+                KAUTH_VNODE_DELETE))
+
+Else
+
+                KAUTH_VNODE_READ_ATTRIBUTES |
+                KAUTH_VNODE_WRITE_ATTRIBUTES |
+                KAUTH_VNODE_READ_EXTATTRIBUTES |
+                KAUTH_VNODE_WRITE_EXTATTRIBUTES |
+                KAUTH_VNODE_READ_DATA |
+                KAUTH_VNODE_WRITE_DATA |
+                KAUTH_VNODE_EXECUTE |
+                KAUTH_VNODE_DELETE))
+   // KAUTH_VNODE_WRITE_DATA (Placeholder/Not a placeholder)
+*/
 @end
