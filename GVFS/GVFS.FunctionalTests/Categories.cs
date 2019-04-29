@@ -15,9 +15,6 @@
             // machines but not on the build agents
             public const string FailsOnBuildAgent = "FailsOnBuildAgent";
 
-            // Tests that require #356 (old paths to be delivered with rename notifications)
-            public const string NeedsRenameOldPath = "NeedsRenameOldPath";
-
             // Git related tests that are not yet passing on Mac
             public const string M3 = "M3_AllGitCommands";
 
