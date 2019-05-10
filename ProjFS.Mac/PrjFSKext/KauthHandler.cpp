@@ -241,6 +241,10 @@ KEXT_STATIC int HandleVnodeOperation(
 
     UseMainForkIfNamedStream(currentVnode, putVnodeWhenDone);
 
+    const char* vnodePath = nullptr;
+    char vnodePathBuffer[PrjFSMaxPath];
+    int vnodePathLength = PrjFSMaxPath;
+
     VirtualizationRootHandle root = RootHandle_None;
     vtype vnodeType;
     uint32_t currentVnodeFileFlags;
@@ -264,7 +268,7 @@ KEXT_STATIC int HandleVnodeOperation(
     {
         goto CleanupAndReturn;
     }
-    
+
     isDeleteAction = ActionBitIsSet(action, KAUTH_VNODE_DELETE);
     isDirectory = VDIR == vnodeType;
     
@@ -371,6 +375,33 @@ KEXT_STATIC int HandleVnodeOperation(
                 KAUTH_VNODE_EXECUTE |
                 KAUTH_VNODE_DELETE)) // Hydrate on delete to ensure files are hydrated before rename operations
         {
+        errno_t error = vn_getpath(currentVnode, vnodePathBuffer, &vnodePathLength);
+        if (0 == error)
+        {
+            vnodePath = vnodePathBuffer;
+        }
+        else
+        {
+            KextLog_ErrorVnodeProperties(currentVnode, "HandleVnodeOperation: vn_getpath failed, error = %d", error);
+        }
+        
+        
+        #ifndef KEXT_UNIT_TESTING
+        if (strprefix(vnodePath,"/Users/jessicaschumaker/GVFSTest"))
+       {
+           KextLog_Error("JESSICA VNODE: path '%s' %s %s %s %s %s %s %s %s", vnodePath,
+           ActionBitIsSet(action, KAUTH_VNODE_READ_ATTRIBUTES) ? "KAUTH_VNODE_READ_ATTRIBUTES" : "",
+           ActionBitIsSet(action, KAUTH_VNODE_WRITE_ATTRIBUTES) ? "KAUTH_VNODE_WRITE_ATTRIBUTES" : "",
+           ActionBitIsSet(action, KAUTH_VNODE_READ_EXTATTRIBUTES) ? "KAUTH_VNODE_READ_EXTATTRIBUTES" : "",
+           ActionBitIsSet(action, KAUTH_VNODE_WRITE_EXTATTRIBUTES) ? "KAUTH_VNODE_WRITE_EXTATTRIBUTES" : "",
+           ActionBitIsSet(action, KAUTH_VNODE_READ_DATA) ? "KAUTH_VNODE_READ_DATA" : "",
+           ActionBitIsSet(action, KAUTH_VNODE_WRITE_DATA) ? "KAUTH_VNODE_WRITE_DATA" : "",
+           ActionBitIsSet(action, KAUTH_VNODE_EXECUTE) ? "KAUTH_VNODE_EXECUTE" : "",
+           ActionBitIsSet(action, KAUTH_VNODE_DELETE) ? "KAUTH_VNODE_DELETE" : "");
+       }
+       #endif
+        
+        
             if (FileFlagsBitIsSet(currentVnodeFileFlags, FileFlags_IsEmpty))
             {
                 // Prevent system services from hydrating files as this tends to cause deadlocks with the kauth listeners for Antivirus software
@@ -398,6 +429,13 @@ KEXT_STATIC int HandleVnodeOperation(
             
             if (ActionBitIsSet(action, KAUTH_VNODE_WRITE_DATA))
             {
+                #ifndef KEXT_UNIT_TESTING
+                if (strprefix(vnodePath,"/Users/jessicaschumaker/GVFSTest"))
+                {
+                    KextLog_Error("JESSICA WRITE_DATA: path '%s'", vnodePath);
+                }
+                #endif
+                
                 if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly, &root, &vnodeFsidInode, &kauthResult, kauthError))
                 {
                     goto CleanupAndReturn;
@@ -459,6 +497,23 @@ KEXT_STATIC int HandleFileOpOperation(
     vfs_context_t _Nonnull context = vfs_context_create(NULL);
     vnode_t currentVnode = NULLVP;
     bool    putCurrentVnode = false;
+
+
+    #ifndef KEXT_UNIT_TESTING
+    const char* testpath = reinterpret_cast<const char*>(arg1);
+    if (strprefix(testpath,"/Users/jessicaschumaker/GVFSTest"))
+    {
+        KextLog_Error("JESSICA FileOp: path '%s' %s %s %s %s %s %s %s %s", testpath, action == KAUTH_FILEOP_OPEN ? "KAUTH_FILEOP_OPEN" : "",
+        action == KAUTH_FILEOP_CLOSE ? "KAUTH_FILEOP_CLOSE" : "",
+        action == KAUTH_FILEOP_RENAME ? "KAUTH_FILEOP_RENAME" : "",
+        action == KAUTH_FILEOP_EXCHANGE ? "KAUTH_FILEOP_EXCHANGE" : "",
+        action == KAUTH_FILEOP_LINK ? "KAUTH_FILEOP_LINK" : "",
+        action == KAUTH_FILEOP_EXEC ? "KAUTH_FILEOP_EXEC" : "",
+        action == KAUTH_FILEOP_DELETE ? "KAUTH_FILEOP_DELETE" : "",
+        action == KAUTH_FILEOP_WILL_RENAME ? "KAUTH_FILEOP_WILL_RENAME" : ""
+        );
+    }
+    #endif
 
     if (KAUTH_FILEOP_RENAME == action ||
         KAUTH_FILEOP_LINK == action)
@@ -622,11 +677,22 @@ KEXT_STATIC int HandleFileOpOperation(
         
         UseMainForkIfNamedStream(currentVnode, putCurrentVnode);
         
+
+        
         if (KAUTH_FILEOP_CLOSE_MODIFIED != closeFlags)
         {
             goto CleanupAndReturn;
         }
-            
+
+            #ifndef KEXT_UNIT_TESTING
+         const char* testpath = reinterpret_cast<const char*>(arg1);
+            if (strprefix(testpath,"/Users/jessicaschumaker/GVFSTest"))
+           {
+               KextLog_Error("JESSICA CLOSE_FLAG %s KAUTH_FILEOP_CLOSE_MODIFIED", testpath);
+           }
+        #endif
+
+        
         VirtualizationRootHandle root = RootHandle_None;
         FsidInode vnodeFsidInode = {};
         int pid;
