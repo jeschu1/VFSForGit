@@ -10,7 +10,7 @@ namespace GVFS.FunctionalTests.Tests.EnlistmentPerTestCase
 {
     [TestFixture]
     [Category(Categories.ExtraCoverage)]
-    [Category(Categories.MacTODO.M4)]
+    [Category(Categories.MacTODO.NeedsRepair)]
     public class RepairTests : TestsWithEnlistmentPerTestCase
     {
         [TestCase]

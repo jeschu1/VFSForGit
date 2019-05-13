@@ -88,7 +88,13 @@ namespace GVFS.FunctionalTests
             {
                 excludeCategories.Add(Categories.MacTODO.FailsOnBuildAgent);
                 excludeCategories.Add(Categories.MacTODO.NeedsNewFolderCreateNotification);
-                excludeCategories.Add(Categories.MacTODO.M4);
+                excludeCategories.Add(Categories.MacTODO.NeedsConfig);
+                excludeCategories.Add(Categories.MacTODO.NeedsDehydrate);
+                excludeCategories.Add(Categories.MacTODO.NeedsRepair);
+                excludeCategories.Add(Categories.MacTODO.NeedsServiceVerb);
+                excludeCategories.Add(Categories.MacTODO.NeedsStatusCache);
+                excludeCategories.Add(Categories.MacTODO.NotSure);
+                excludeCategories.Add(Categories.MacTODO.TestNeedsToLockFile);
                 excludeCategories.Add(Categories.MacTODO.FlakyTest);
                 excludeCategories.Add(Categories.WindowsOnly);
             }
