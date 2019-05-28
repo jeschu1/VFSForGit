@@ -26,6 +26,11 @@ static RWLock s_virtualizationRootsLock = {};
 KEXT_STATIC uint16_t s_maxVirtualizationRoots = 0;
 KEXT_STATIC VirtualizationRoot* s_virtualizationRoots = nullptr;
 
+// Also protected by the lock
+static uint32_t s_maxOfflineIOPIDs = 0;
+static uint32_t s_offlineIOPIDCount = 0;
+static pid_t*   s_offlineIOPIDs = nullptr;
+
 // Looks up the vnode/vid and fsid/inode pairs among the known roots
 static VirtualizationRootHandle FindRootAtVnode_Locked(vnode_t vnode, uint32_t vid, FsidInode fileId);
 
@@ -113,6 +118,15 @@ kern_return_t VirtualizationRoots_Cleanup()
         Memory_FreeArray(s_virtualizationRoots, s_maxVirtualizationRoots);
         s_virtualizationRoots = nullptr;
         s_maxVirtualizationRoots = 0;
+    }
+
+    if (s_offlineIOPIDs != nullptr)
+    {
+        assert(s_offlineIOPIDCount == 0);
+        
+        Memory_FreeArray(s_offlineIOPIDs, s_maxOfflineIOPIDs);
+        s_offlineIOPIDs = nullptr;
+        s_maxOfflineIOPIDs = 0;
     }
 
     if (RWLock_IsValid(s_virtualizationRootsLock))
@@ -652,4 +666,113 @@ VirtualizationRootHandle ActiveProvider_FindForPath(const char* _Nonnull path)
     RWLock_ReleaseShared(s_virtualizationRootsLock);
     
     return matchingHandle;
+}
+
+bool VirtualizationRoots_ProcessMayAccessOfflineRoots(pid_t pid)
+{
+    bool result = false;
+    
+    RWLock_AcquireShared(s_virtualizationRootsLock);
+    {
+        for (uint32_t i = 0; i < s_offlineIOPIDCount; ++i)
+        {
+            if (s_offlineIOPIDs[i] == pid)
+            {
+                result = true;
+                break;
+            }
+        }
+    }
+    RWLock_ReleaseShared(s_virtualizationRootsLock);
+
+    return result;
+}
+
+bool VirtualizationRoots_AddOfflineIOProcess(pid_t pid)
+{
+    bool success = false;
+    bool retry;
+    pid_t* resizeMemory = nullptr;
+    uint32_t resizeMemoryArrayLength = 0;
+    
+    do
+    {
+        retry = false;
+        RWLock_AcquireExclusive(s_virtualizationRootsLock);
+        {
+            if (resizeMemory != nullptr)
+            {
+                if (resizeMemoryArrayLength > s_maxOfflineIOPIDs)
+                {
+                    if (s_maxOfflineIOPIDs > 0)
+                    {
+                        memcpy(resizeMemory, s_offlineIOPIDs, sizeof(s_offlineIOPIDs[0]) * s_offlineIOPIDCount);
+                        assert(s_offlineIOPIDs != nullptr);
+                        Memory_FreeArray(s_offlineIOPIDs, s_maxOfflineIOPIDs);
+                    }
+                
+                    s_offlineIOPIDs = resizeMemory;
+                    s_maxOfflineIOPIDs = resizeMemoryArrayLength;
+                }
+                else
+                {
+                    // This branch is taken if there was a race to resize the array with another thread
+                    Memory_FreeArray(resizeMemory, resizeMemoryArrayLength);
+                }
+
+                resizeMemory = nullptr;
+                resizeMemoryArrayLength = 0;
+            }
+            
+            if (s_offlineIOPIDCount < s_maxOfflineIOPIDs)
+            {
+                s_offlineIOPIDs[s_offlineIOPIDCount] = pid;
+                ++s_offlineIOPIDCount;
+                success = true;
+            }
+            else if (s_maxOfflineIOPIDs < UINT32_MAX)
+            {
+                retry = true;
+                resizeMemoryArrayLength = MIN(MAX(1u, s_maxOfflineIOPIDs * 2u), UINT32_MAX);
+            }
+        }
+        RWLock_ReleaseExclusive(s_virtualizationRootsLock);
+        
+        if (resizeMemoryArrayLength > 0)
+        {
+            assert(retry);
+            resizeMemory = Memory_AllocArray<pid_t>(resizeMemoryArrayLength);
+        }
+    } while (retry);
+    
+    return success;
+}
+
+void VirtualizationRoots_RemoveOfflineIOProcess(pid_t pid)
+{
+    bool removed = false;
+    
+    RWLock_AcquireExclusive(s_virtualizationRootsLock);
+    {
+        assert(s_offlineIOPIDCount > 0);
+
+        for (uint32_t i = 0; i < s_offlineIOPIDCount; ++i)
+        {
+            if (s_offlineIOPIDs[i] == pid)
+            {
+                --s_offlineIOPIDCount;
+                if (i != s_offlineIOPIDCount)
+                {
+                    // move last element to fill vacated slot
+                    s_offlineIOPIDs[i] = s_offlineIOPIDs[s_offlineIOPIDCount];
+                }
+                
+                removed = true;
+                break;
+            }
+        }
+    }
+    RWLock_ReleaseExclusive(s_virtualizationRootsLock);
+    
+    assert(removed);
 }

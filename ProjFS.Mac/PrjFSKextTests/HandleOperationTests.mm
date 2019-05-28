@@ -21,6 +21,7 @@
 using std::make_tuple;
 using std::shared_ptr;
 using std::vector;
+using std::extent;
 using KextMock::_;
 
 class PrjFSProviderUserClient
@@ -853,5 +854,59 @@ static void SetPrjFSFileXattrData(const shared_ptr<vnode>& vnode)
     XCTAssertTrue(MockCalls::CallCount(ProviderMessaging_TrySendRequestAndWaitForResponse) == 0);
 }
 
+
+- (void) testOfflineRootAllowsRegisteredProcessAccessToEmptyFile
+{
+    testFileVnode->attrValues.va_flags = FileFlags_IsEmpty | FileFlags_IsInVirtualizationRoot;
+    SetPrjFSFileXattrData(testFileVnode);
+
+    ActiveProvider_Disconnect(self->dummyRepoHandle, &self->dummyClient);
+
+    XCTAssertTrue(VirtualizationRoots_AddOfflineIOProcess(501));
+
+    kauth_action_t actions[] =
+    {
+        KAUTH_VNODE_READ_ATTRIBUTES,
+        KAUTH_VNODE_WRITE_ATTRIBUTES,
+        KAUTH_VNODE_READ_EXTATTRIBUTES,
+        KAUTH_VNODE_WRITE_EXTATTRIBUTES,
+        KAUTH_VNODE_READ_DATA,
+        KAUTH_VNODE_WRITE_DATA,
+        KAUTH_VNODE_EXECUTE,
+        KAUTH_VNODE_DELETE,
+        KAUTH_VNODE_APPEND_DATA,
+    };
+    const size_t actionCount = extent<decltype(actions)>::value;
+    
+    for (size_t i = 0; i < actionCount; i++)
+    {
+        XCTAssertEqual(
+            KAUTH_RESULT_DEFER,
+            HandleVnodeOperation(
+                nullptr,
+                nullptr,
+                actions[i],
+                reinterpret_cast<uintptr_t>(context),
+                reinterpret_cast<uintptr_t>(testFileVnode.get()),
+                0,
+                0));
+        XCTAssertFalse(
+            MockCalls::DidCallFunction(
+                ProviderMessaging_TrySendRequestAndWaitForResponse,
+                _,
+                MessageType_KtoU_HydrateFile,
+                testFileVnode.get(),
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                nullptr));
+        MockCalls::Clear();
+    }
+
+    VirtualizationRoots_RemoveOfflineIOProcess(501);
+}
 
 @end

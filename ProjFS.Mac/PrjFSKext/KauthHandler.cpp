@@ -928,7 +928,10 @@ static bool TryGetVirtualizationRoot(
         
         perfTracer->IncrementCount(PrjFSPerfCounter_VnodeOp_GetVirtualizationRoot_ProviderOffline);
         
-        *kauthResult = KAUTH_RESULT_DEFER;
+        if (!VirtualizationRoots_ProcessMayAccessOfflineRoots(pidMakingRequest))
+        {
+        }
+        
         return false;
     }
     
