@@ -179,7 +179,7 @@ bool ProviderMessaging_TrySendRequestAndWaitForResponse(
         if (0 != sendError)
         {
             // TODO: appropriately handle unresponsive providers
-            *kauthResult = KAUTH_RESULT_DEFER;
+            *kauthResult = KAUTH_RESULT_DENY;
         }
         else
         {
