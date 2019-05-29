@@ -352,7 +352,7 @@ KEXT_STATIC int HandleVnodeOperation(
             {
                 // Prevent system services from hydrating files as this tends to cause deadlocks with the kauth listeners for Antivirus software
                 if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly,
-                    false, // TODO
+                    ActionBitIsSet(action, KAUTH_VNODE_WRITE_ATTRIBUTES | KAUTH_VNODE_WRITE_EXTATTRIBUTES | KAUTH_VNODE_WRITE_DATA | KAUTH_VNODE_APPEND_DATA), // prevent write access to files, but allow deleting
                     &root, &vnodeFsidInode, &kauthResult, kauthError))
                 {
                     goto CleanupAndReturn;
