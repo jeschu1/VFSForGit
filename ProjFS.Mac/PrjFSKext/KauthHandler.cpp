@@ -81,7 +81,8 @@ static bool TryGetVirtualizationRoot(
     const vnode_t vnode,
     pid_t pidMakingRequest,
     ProviderCallbackPolicy callbackPolicy,
-    
+    bool denyIfOffline,
+
     // Out params:
     VirtualizationRootHandle* root,
     FsidInode* vnodeFsidInode,
@@ -280,7 +281,9 @@ KEXT_STATIC int HandleVnodeOperation(
             if (isDeleteAction)
             {
                 // Prevent system services from expanding directories as part of enumeration as this tends to cause deadlocks with the kauth listeners for Antivirus software
-                if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly, &root, &vnodeFsidInode, &kauthResult, kauthError))
+                if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly,
+                    false, // allow deleting offline directories even if not expanded
+                    &root, &vnodeFsidInode, &kauthResult, kauthError))
                 {
                     goto CleanupAndReturn;
                 }
@@ -305,7 +308,9 @@ KEXT_STATIC int HandleVnodeOperation(
             else if (FileFlagsBitIsSet(currentVnodeFileFlags, FileFlags_IsEmpty))
             {
                 // Prevent system services from expanding directories as part of enumeration as this tends to cause deadlocks with the kauth listeners for Antivirus software
-                if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly, &root, &vnodeFsidInode, &kauthResult, kauthError))
+                if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly,
+                    false, // allow reading offline directories even if not expanded
+                    &root, &vnodeFsidInode, &kauthResult, kauthError))
                 {
                     goto CleanupAndReturn;
                 }
@@ -346,7 +351,9 @@ KEXT_STATIC int HandleVnodeOperation(
             if (FileFlagsBitIsSet(currentVnodeFileFlags, FileFlags_IsEmpty))
             {
                 // Prevent system services from hydrating files as this tends to cause deadlocks with the kauth listeners for Antivirus software
-                if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly, &root, &vnodeFsidInode, &kauthResult, kauthError))
+                if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly,
+                    false, // TODO
+                    &root, &vnodeFsidInode, &kauthResult, kauthError))
                 {
                     goto CleanupAndReturn;
                 }
@@ -371,7 +378,9 @@ KEXT_STATIC int HandleVnodeOperation(
             
             if (ActionBitIsSet(action, KAUTH_VNODE_WRITE_DATA | KAUTH_VNODE_APPEND_DATA))
             {
-                if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly, &root, &vnodeFsidInode, &kauthResult, kauthError))
+                if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly,
+                    false, // TODO
+                    &root, &vnodeFsidInode, &kauthResult, kauthError))
                 {
                     goto CleanupAndReturn;
                 }
@@ -407,11 +416,13 @@ KEXT_STATIC int HandleVnodeOperation(
     if (isDeleteAction)
     {
         // Allow any user to delete individual files, as this generally doesn't cause nested kauth callbacks.
-        if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_AllowAny, &root, &vnodeFsidInode, &kauthResult, kauthError))
+        if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_AllowAny,
+            false, // allow deletes even if offline
+            &root, &vnodeFsidInode, &kauthResult, kauthError))
         {
             goto CleanupAndReturn;
         }
-                
+        
         PerfSample preDeleteSample(&perfTracer, PrjFSPerfCounter_VnodeOp_PreDelete);
         
         // Predeletes must be sent after hydration since they may convert the file to full
@@ -886,6 +897,7 @@ static bool TryGetVirtualizationRoot(
     const vnode_t vnode,
     pid_t pidMakingRequest,
     ProviderCallbackPolicy callbackPolicy,
+    bool denyIfOffline,
 
     // Out params:
     VirtualizationRootHandle* root,
@@ -923,13 +935,14 @@ static bool TryGetVirtualizationRoot(
     ActiveProviderProperties provider = VirtualizationRoot_GetActiveProvider(*root);
     if (!provider.isOnline)
     {
-        // TODO(Mac): Protect files in the worktree from modification (and prevent
-        // the creation of new files) when the provider is offline
-        
         perfTracer->IncrementCount(PrjFSPerfCounter_VnodeOp_GetVirtualizationRoot_ProviderOffline);
         
         if (!VirtualizationRoots_ProcessMayAccessOfflineRoots(pidMakingRequest))
         {
+            if (denyIfOffline)
+            {
+                *kauthResult = KAUTH_RESULT_DENY;
+            }
         }
         
         return false;
