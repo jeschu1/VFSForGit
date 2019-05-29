@@ -379,7 +379,7 @@ KEXT_STATIC int HandleVnodeOperation(
             if (ActionBitIsSet(action, KAUTH_VNODE_WRITE_DATA | KAUTH_VNODE_APPEND_DATA))
             {
                 if (!TryGetVirtualizationRoot(&perfTracer, context, currentVnode, pid, CallbackPolicy_UserInitiatedOnly,
-                    false, // TODO
+                    true, // deny write access (should already have been caought above)
                     &root, &vnodeFsidInode, &kauthResult, kauthError))
                 {
                     goto CleanupAndReturn;
