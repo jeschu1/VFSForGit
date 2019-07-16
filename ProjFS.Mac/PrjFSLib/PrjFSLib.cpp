@@ -1504,17 +1504,35 @@ static const char* GetRelativePath(const char* fullPath, const char* root)
     {
         return "";
     }
-    
+
+    //char buf[PATH_MAX];
+    //LogError("Path Before '%s'\n", fullPath);
+    //const char* realFullPath = realpath(fullPath, buf);
+    //LogError("Path After '%s'\n", realFullPath);
+
+    string altPath(fullPath);
+    const char* removePart = "/System/Volumes/Data";
+    size_t index = altPath.find(removePart);
+    const char* realFullPath; // = altPath.c_str();
+    if (index == 0)
+    {
+        realFullPath = fullPath + strlen(removePart);
+    }
+    else
+    {
+        realFullPath = fullPath;
+    }
+
     size_t rootLength = strlen(root);
-    size_t pathLength = strlen(fullPath);
-    if (pathLength < rootLength || 0 != memcmp(fullPath, root, rootLength))
+    size_t pathLength = strlen(realFullPath);
+    if (pathLength < rootLength || 0 != memcmp(realFullPath, root, rootLength))
     {
         // TODO(Mac): Add this message to PrjFSLib logging once available (#395)
-        LogError("GetRelativePath: root path '%s' is not a prefix of path '%s'\n", root, fullPath);
+        LogError("GetRelativePath: root path '%s' is not a prefix of path '%s'\n", root, realFullPath);
         return nullptr;
     }
     
-    const char* relativePath = fullPath + rootLength;
+    const char* relativePath = realFullPath + rootLength;
     if (relativePath[0] == '/')
     {
         relativePath++;
@@ -1522,7 +1540,7 @@ static const char* GetRelativePath(const char* fullPath, const char* root)
     else if (rootLength > 0 && root[rootLength - 1] != '/' && pathLength > rootLength)
     {
         // TODO(Mac): Add this message to PrjFSLib logging once available (#395)
-        LogError("GetRelativePath: root path '%s' is not a parent directory of path '%s' (just a string prefix)\n", root, fullPath);
+        LogError("GetRelativePath: root path '%s' is not a parent directory of path '%s' (just a string prefix)\n", root, realFullPath);
         return nullptr;
     }
     
