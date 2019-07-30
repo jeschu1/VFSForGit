@@ -48,6 +48,7 @@ namespace GVFS.Hooks
             "gc",
             "get-tar-commit-id",
             "grep",
+            "gui",
             "hash-object",
             "help",
             "index-pack",

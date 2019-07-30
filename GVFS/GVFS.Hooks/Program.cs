@@ -53,7 +53,6 @@ namespace GVFS.Hooks
                 switch (GetHookType(args))
                 {
                     case PreCommandHook:
-                        CheckForLegalCommands(args);
                         RunLockRequest(args, unattended, AcquireGVFSLockForProcess);
                         RunPreCommands(args);
                         break;
@@ -124,17 +123,6 @@ namespace GVFS.Hooks
             }
 
             Environment.Exit(1);
-        }
-
-        private static void CheckForLegalCommands(string[] args)
-        {
-            string command = GetGitCommand(args);
-            switch (command)
-            {
-                case "gui":
-                    ExitWithError("To access the 'git gui' in a GVFS repo, please invoke 'git-gui.exe' instead.");
-                    break;
-            }
         }
 
         private static void RunLockRequest(string[] args, bool unattended, LockRequestDelegate requestToRun)
@@ -338,6 +326,7 @@ namespace GVFS.Hooks
                 case "difftool":
                 case "fetch":
                 case "for-each-ref":
+                case "gui":
                 case "help":
                 case "hash-object":
                 case "index-pack":
