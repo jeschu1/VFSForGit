@@ -29,3 +29,5 @@ SizeOrError Vnode_ReadXattr(vnode_t vnode, const char* xattrName, void* buffer, 
     errno_t error = mac_vnop_getxattr(vnode, xattrName, static_cast<char*>(buffer), bufferSize, &actualSize);
     return SizeOrError { actualSize, error };
 }
+
+

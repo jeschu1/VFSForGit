@@ -76,6 +76,7 @@ KEXT_STATIC bool IsFileSystemCrawler(const char* procname);
 static void WaitForListenerCompletion();
 KEXT_STATIC bool ShouldIgnoreVnodeType(vtype vnodeType, vnode_t vnode);
 static bool VnodeIsEligibleForEventHandling(vnode_t vnode);
+static const char* FileOp_ActionName(kauth_action_t action);
 
 KEXT_STATIC bool ShouldHandleVnodeOpEvent(
     // In params:
@@ -433,6 +434,25 @@ KEXT_STATIC int HandleVnodeOperation(
 
     UseMainForkIfNamedStream(currentVnode, putVnodeWhenDone);
 
+    char vnodePathBuffer[PrjFSMaxPath];
+    int vnodePathLength = PrjFSMaxPath;
+    
+    if (0 == vn_getpath(currentVnode, vnodePathBuffer, &vnodePathLength))
+    {
+        const char test[] = "path";
+        if (strncmp(vnodePathBuffer, test, sizeof(test) - 1) == 0)
+        {
+             // KextLog_Error("Blah: HandleVNodeOperation %s '%s'",operationName, vnodePathBuffer);
+             KextLog_VnodeOp(
+                currentVnode,
+                vnode_vtype(currentVnode),
+                "",
+                action,
+                "Blah: HandleVNodeOperation");
+        }
+    }
+
+
     VirtualizationRootHandle root = RootHandle_None;
     uint32_t currentVnodeFileFlags;
     FsidInode vnodeFsidInode;
@@ -744,13 +764,30 @@ KEXT_STATIC int HandleVnodeOperation(
         }
     }
 
+
     
 CleanupAndReturn:
+    if (KAUTH_RESULT_DENY == kauthResult)
+    {
+         KextLog_VnodeOp(
+                currentVnode,
+                vnode_vtype(currentVnode),
+                "",
+                action,
+                "Blah: DENY HandleVNodeOperation ");
+         proc_t proc = proc_self();
+         kauth_cred_t cred = kauth_cred_proc_ref(proc);
+         uid_t uid = kauth_cred_getuid(cred);
+         KextLog("Blah: procname=%s pid=%d uid=%d",procname, pid, uid);
+         kauth_cred_unref(&cred);
+         proc_rele(proc);
+    }
+
     if (putVnodeWhenDone)
     {
         vnode_put(currentVnode);
     }
-    
+
     atomic_fetch_sub(&s_numActiveKauthEvents, 1);
     return kauthResult;
 }
@@ -774,6 +811,20 @@ KEXT_STATIC int HandleFileOpOperation(
     vfs_context_t _Nonnull context = vfs_context_create(NULL);
     vnode_t currentVnode = NULLVP;
     bool    putCurrentVnode = false;
+    
+    const char* path = reinterpret_cast<const char*>(arg0);
+    const char* path2 = reinterpret_cast<const char*>(arg1);
+    const char test[] = "users";
+    
+    if (path != NULL && strncmp(path, test, sizeof(test) - 1) == 0)
+    {
+         KextLog_Error("Blah: HandleFileOpOperation %s '%s'",FileOp_ActionName(action), path);
+        
+    }
+    if (path2 != NULL && strncmp(path2, test, sizeof(test) - 1) == 0)
+    {
+         KextLog_Error("Blah2: HandleFileOpOperation %s '%s'",FileOp_ActionName(action), path2);
+    }
 
     if (KAUTH_FILEOP_RENAME == action)
     {
@@ -1314,12 +1365,21 @@ KEXT_STATIC bool CurrentProcessWasSpawnedByRegularUser()
         }
     }
     
-    
     if (process != nullptr)
     {
         proc_rele(process);
     }
     
+    if (!nonServiceUser)
+    {
+       char buffer[MAXCOMLEN + 1] = "";
+       proc_selfname(buffer, sizeof(buffer));
+       if (0 == strcmp(buffer,"amfid"))
+       {
+          return true;
+       }
+    }
+
     return nonServiceUser;
 }
     
@@ -1579,4 +1639,29 @@ KEXT_STATIC bool ShouldIgnoreVnodeType(vtype vnodeType, vnode_t vnode)
     }
     
     return false;
+}
+
+static const char* FileOp_ActionName(kauth_action_t action)
+{
+   switch (action)
+   {
+       case KAUTH_FILEOP_OPEN:
+        return "KAUTH_FILEOP_OPEN";
+       case KAUTH_FILEOP_CLOSE:
+        return "KAUTH_FILEOP_CLOSE";
+       case KAUTH_FILEOP_RENAME:
+        return "KAUTH_FILEOP_RENAME";
+       case KAUTH_FILEOP_EXCHANGE:
+        return "KAUTH_FILEOP_EXCHANGE";
+       case KAUTH_FILEOP_LINK:
+        return "KAUTH_FILEOP_LINK";
+       case KAUTH_FILEOP_EXEC:
+        return "KAUTH_FILEOP_EXEC";
+       case KAUTH_FILEOP_DELETE:
+        return "KAUTH_FILEOP_DELETE";
+       case KAUTH_FILEOP_WILL_RENAME:
+        return "KAUTH_FILEOP_WILL_RENAME";
+       default:
+         return "UNKNOWN";
+   }
 }

@@ -149,6 +149,11 @@ int proc_selfpid(void)
     return s_selfPid;
 }
 
+void proc_selfname(char * buf, int size)
+{
+}
+
+
 void MockProcess_AddCredential(uintptr_t credentialId, uid_t UID)
 {
     s_credentialMap.insert(make_pair(credentialId, UID));

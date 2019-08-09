@@ -21,6 +21,7 @@ extern "C"
     int proc_rele(proc_t p);
     int proc_selfpid(void);
     kernel_thread_t current_thread(void);
+    void proc_selfname(char * buf, int size);
 }
 
 struct proc {

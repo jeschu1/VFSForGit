@@ -56,7 +56,7 @@ static void LogKextHealthData(const PrjFSVnodeCacheHealth& healthData);
 
 static void CreatePipeToMessageListener();
 static void ClosePipeToMessageListener_Locked();
-static string MessageTypeToString(MessageType messageType);
+// static string MessageTypeToString(MessageType messageType);
 static void WriteJsonToMessageListener(MessageType messageType, const JsonWriter& jsonMessage);
 
 int main(int argc, const char* argv[])
@@ -137,6 +137,7 @@ int main(int argc, const char* argv[])
         lock_guard<mutex> lock(s_messageListenerMutex);
         ClosePipeToMessageListener_Locked();
     }
+
     
     return 0;
 }
@@ -421,6 +422,7 @@ static void ClosePipeToMessageListener_Locked()
     }
 }
 
+/*
 static string MessageTypeToString(MessageType messageType)
 {
     switch (messageType) {
@@ -436,9 +438,11 @@ static string MessageTypeToString(MessageType messageType)
     
     return "invalid";
 }
+*/
 
 static void WriteJsonToMessageListener(MessageType messageType, const JsonWriter& jsonMessage)
 {
+/*
     lock_guard<mutex> lock(s_messageListenerMutex);
     
     if (INVALID_SOCKET_FD == s_messageListenerSocket)
@@ -487,4 +491,5 @@ static void WriteJsonToMessageListener(MessageType messageType, const JsonWriter
         // If anything goes wrong close the socket.  The next time the timer fires we'll re-connect
         ClosePipeToMessageListener_Locked();
     }
+    */
 }
