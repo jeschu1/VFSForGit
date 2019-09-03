@@ -923,6 +923,8 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
         [Category(Categories.MacOnly)]
         public void RunPythonExecutable()
         {
+            GitProcess.Invoke(this.Enlistment.RepoRoot, "checkout FunctionalTests/20190827");
+
             string pythonDirectory = Path.Combine(this.Enlistment.RepoRoot, "Test_Executable");
             string pythonExecutable = Path.Combine(pythonDirectory, "python_wrapper.sh");
 
@@ -934,7 +936,9 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             ProcessResult result = ProcessHelper.Run(startInfo);
             result.ExitCode.ShouldEqual(0);
             result.Output.ShouldContain("3.14");
-       }
+
+            GitProcess.Invoke(this.Enlistment.RepoRoot, "checkout " + this.Enlistment.Commitish);
+        }
 
         private class FileRunnersAndFolders
         {
