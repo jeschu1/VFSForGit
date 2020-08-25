@@ -6,6 +6,7 @@
 pr:
 - master
 
+pool: github
 
 steps:
 - script: echo Hello, world!
