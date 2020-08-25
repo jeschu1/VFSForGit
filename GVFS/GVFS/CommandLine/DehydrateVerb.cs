@@ -90,7 +90,7 @@ of your enlistment's src folder.
                 this.Output.WriteLine();
 
                 this.Unmount(tracer);
-                
+
                 string error;
                 if (!DiskLayoutUpgrade.TryCheckDiskLayoutVersion(tracer, enlistment.EnlistmentRoot, out error))
                 {
@@ -103,8 +103,14 @@ of your enlistment's src folder.
                     this.ReportErrorAndExit(tracer, "Failed to determine GVFS timeout and max retries: " + error);
                 }
 
+                string errorMessage;
+                if (!this.TryAuthenticate(tracer, enlistment, out errorMessage))
+                {
+                    this.ReportErrorAndExit(tracer, errorMessage);
+                }
+
                 // Local cache and objects paths are required for TryDownloadGitObjects
-                this.InitializeLocalCacheAndObjectsPaths(tracer, enlistment, retryConfig, gvfsConfig: null, cacheServer: null);
+                this.InitializeLocalCacheAndObjectsPaths(tracer, enlistment, retryConfig, serverGVFSConfig: null, cacheServer: null);
 
                 if (this.TryBackupFiles(tracer, enlistment, backupRoot))
                 {
@@ -221,9 +227,18 @@ of your enlistment's src folder.
 
         private void PrepareSrcFolder(ITracer tracer, GVFSEnlistment enlistment)
         {
+            Exception exception;
             string error;
-            if (!GVFSPlatform.Instance.KernelDriver.TryPrepareFolderForCallbacks(enlistment.WorkingDirectoryRoot, out error))
+            if (!GVFSPlatform.Instance.KernelDriver.TryPrepareFolderForCallbacks(enlistment.WorkingDirectoryRoot, out error, out exception))
             {
+                EventMetadata metadata = new EventMetadata();
+                metadata.Add(nameof(error), error);
+                if (exception != null)
+                {
+                    metadata.Add("Exception", exception.ToString());
+                }
+
+                tracer.RelatedError(metadata, $"{nameof(this.PrepareSrcFolder)}: TryPrepareFolderForCallbacks failed");
                 this.ReportErrorAndExit(tracer, "Failed to recreate the virtualization root: " + error);
             }
         }

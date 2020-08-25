@@ -1,9 +1,8 @@
+using GVFS.Common.Git;
 using GVFS.Common.NamedPipes;
 using Newtonsoft.Json;
 using System;
 using System.IO;
-using System.Security.AccessControl;
-using System.Security.Principal;
 using System.Threading;
 
 namespace GVFS.Common
@@ -13,21 +12,21 @@ namespace GVFS.Common
         public const string BlobSizesCacheName = "blobSizes";
 
         private const string GitObjectCacheName = "gitObjects";
-        private const string InvalidRepoUrl = "invalid://repoUrl";
 
         private string gitVersion;
         private string gvfsVersion;
         private string gvfsHooksVersion;
 
         // New enlistment
-        public GVFSEnlistment(string enlistmentRoot, string repoUrl, string gitBinPath, string gvfsHooksRoot)
+        public GVFSEnlistment(string enlistmentRoot, string repoUrl, string gitBinPath, string gvfsHooksRoot, GitAuthentication authentication)
             : base(
                   enlistmentRoot,
                   Path.Combine(enlistmentRoot, GVFSConstants.WorkingDirectoryRootName),
                   repoUrl,
                   gitBinPath,
                   gvfsHooksRoot,
-                  flushFileBuffersForPacks: true)
+                  flushFileBuffersForPacks: true,
+                  authentication: authentication)
         {
             this.NamedPipeName = GVFSPlatform.Instance.GetNamedPipeName(this.EnlistmentRoot);
             this.DotGVFSRoot = Path.Combine(this.EnlistmentRoot, GVFSConstants.DotGVFS.Root);
@@ -38,12 +37,13 @@ namespace GVFS.Common
         }
 
         // Existing, configured enlistment
-        private GVFSEnlistment(string enlistmentRoot, string gitBinPath, string gvfsHooksRoot)
+        private GVFSEnlistment(string enlistmentRoot, string gitBinPath, string gvfsHooksRoot, GitAuthentication authentication)
             : this(
                   enlistmentRoot,
                   null,
                   gitBinPath,
-                  gvfsHooksRoot)
+                  gvfsHooksRoot,
+                  authentication)
         {
         }
 
@@ -79,7 +79,7 @@ namespace GVFS.Common
             get { return this.gvfsHooksVersion; }
         }
 
-        public static GVFSEnlistment CreateWithoutRepoUrlFromDirectory(string directory, string gitBinRoot, string gvfsHooksRoot)
+        public static GVFSEnlistment CreateWithoutRepoUrlFromDirectory(string directory, string gitBinRoot, string gvfsHooksRoot, GitAuthentication authentication)
         {
             if (Directory.Exists(directory))
             {
@@ -90,13 +90,13 @@ namespace GVFS.Common
                     return null;
                 }
 
-                return new GVFSEnlistment(enlistmentRoot, InvalidRepoUrl, gitBinRoot, gvfsHooksRoot);
+                return new GVFSEnlistment(enlistmentRoot, string.Empty, gitBinRoot, gvfsHooksRoot, authentication);
             }
 
             return null;
         }
 
-        public static GVFSEnlistment CreateFromDirectory(string directory, string gitBinRoot, string gvfsHooksRoot)
+        public static GVFSEnlistment CreateFromDirectory(string directory, string gitBinRoot, string gvfsHooksRoot, GitAuthentication authentication)
         {
             if (Directory.Exists(directory))
             {
@@ -107,7 +107,7 @@ namespace GVFS.Common
                     return null;
                 }
 
-                return new GVFSEnlistment(enlistmentRoot, gitBinRoot, gvfsHooksRoot);
+                return new GVFSEnlistment(enlistmentRoot, gitBinRoot, gvfsHooksRoot, authentication);
             }
 
             return null;

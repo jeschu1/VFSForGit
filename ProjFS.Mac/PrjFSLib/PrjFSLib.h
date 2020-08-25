@@ -33,6 +33,8 @@ typedef enum
     PrjFS_Result_EIOError                           = 0x20000040,
     PrjFS_Result_ENotAVirtualizationRoot            = 0x20000080,
     PrjFS_Result_EVirtualizationRootAlreadyExists   = 0x20000100,
+    PrjFS_Result_EDirectoryNotEmpty                 = 0x20000200,
+    PrjFS_Result_EVirtualizationInvalidOperation    = 0x20000400,
     
     PrjFS_Result_ENotYetImplemented                 = 0xFFFFFFFF,
     
@@ -85,6 +87,10 @@ extern "C" PrjFS_Result PrjFS_WritePlaceholderFile(
     _In_    unsigned long                           fileSize,
     _In_    uint16_t                                fileMode);
 
+extern "C" PrjFS_Result PrjFS_WriteSymLink(
+    _In_    const char*                             relativePath,
+    _In_    const char*                             symLinkTarget);
+
 typedef enum
 {
     PrjFS_UpdateType_Invalid                        = 0x00000000,
@@ -108,6 +114,12 @@ extern "C" PrjFS_Result PrjFS_UpdatePlaceholderFileIfNeeded(
     _In_    unsigned char                           contentId[PrjFS_PlaceholderIdLength],
     _In_    unsigned long                           fileSize,
     _In_    uint16_t                                fileMode,
+    _In_    PrjFS_UpdateType                        updateFlags,
+    _Out_   PrjFS_UpdateFailureCause*               failureCause);
+
+extern "C" PrjFS_Result PrjFS_ReplacePlaceholderFileWithSymLink(
+    _In_    const char*                             relativePath,
+    _In_    const char*                             symLinkTarget,
     _In_    PrjFS_UpdateType                        updateFlags,
     _Out_   PrjFS_UpdateFailureCause*               failureCause);
 

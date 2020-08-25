@@ -13,11 +13,10 @@ using System.Text;
 
 namespace GVFS.FunctionalTests.Tests.EnlistmentPerFixture
 {
-    [TestFixtureSource(typeof(FileSystemRunner), FileSystemRunner.TestRunners)]
+    [TestFixtureSource(typeof(FileSystemRunner), nameof(FileSystemRunner.Runners))]
     public class WorkingDirectoryTests : TestsWithEnlistmentPerFixture
     {
-        private const int CurrentPlaceholderVersion = 1;
-        private const string TestFileContents =
+        public const string TestFileContents =
 @"// dllmain.cpp : Defines the entry point for the DLL application.
 #include ""stdafx.h""
 
@@ -41,6 +40,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 }
 
 ";
+        private const int CurrentPlaceholderVersion = 1;
 
         private FileSystemRunner fileSystem;
 
@@ -401,7 +401,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
             GitProcess.InvokeProcess(this.Enlistment.RepoRoot, "checkout 54ea499de78eafb4dfd30b90e0bd4bcec26c4349");
 
             // Confirm that no other test has created GVFlt_MultiThreadTest or put it in the modified files
-            GVFSHelpers.ModifiedPathsShouldNotContain(this.fileSystem, this.Enlistment.DotGVFSRoot, folderName);
+            GVFSHelpers.ModifiedPathsShouldNotContain(this.Enlistment, this.fileSystem, folderName);
 
             string virtualFolderPath = this.Enlistment.GetVirtualPathTo(folderName);
             virtualFolderPath.ShouldNotExistOnDisk(this.fileSystem);
@@ -418,7 +418,6 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 
         [TestCase, Order(14)]
         [Category(Categories.GitCommands)]
-        [Category(Categories.MacTODO.M3)]
         public void FolderContentsCorrectAfterCreateNewFolderRenameAndCheckoutCommitWithSameFolder()
         {
             // 3a55d3b760c87642424e834228a3408796501e7c is the commit prior to adding Test_EPF_MoveRenameFileTests
@@ -428,23 +427,23 @@ BOOL APIENTRY DllMain( HMODULE hModule,
             string folderName = "Test_EPF_MoveRenameFileTests";
             string folder = this.Enlistment.GetVirtualPathTo(folderName);
             folder.ShouldNotExistOnDisk(this.fileSystem);
-            GVFSHelpers.ModifiedPathsShouldNotContain(this.fileSystem, this.Enlistment.DotGVFSRoot, folderName);
+            GVFSHelpers.ModifiedPathsShouldNotContain(this.Enlistment, this.fileSystem, folderName);
 
             // Confirm modified paths picks up renamed folder
             string newFolder = this.Enlistment.GetVirtualPathTo("newFolder");
             this.fileSystem.CreateDirectory(newFolder);
             this.fileSystem.MoveDirectory(newFolder, folder);
 
-            this.Enlistment.WaitForBackgroundOperations().ShouldEqual(true, "Background operations failed to complete.");
-            GVFSHelpers.ModifiedPathsShouldContain(this.fileSystem, this.Enlistment.DotGVFSRoot, folderName + "/");
+            this.Enlistment.WaitForBackgroundOperations();
+            GVFSHelpers.ModifiedPathsShouldContain(this.Enlistment, this.fileSystem, folderName + "/");
 
             // Switch back to this.ControlGitRepo.Commitish and confirm that folder contents are correct
             GitProcess.InvokeProcess(this.Enlistment.RepoRoot, "checkout " + Properties.Settings.Default.Commitish);
 
             folder.ShouldBeADirectory(this.fileSystem);
-            (folder + @"\ChangeNestedUnhydratedFileNameCase\Program.cs").ShouldBeAFile(this.fileSystem).WithContents(MoveRenameFileTests.TestFileContents);
-            (folder + @"\ChangeUnhydratedFileName\Program.cs").ShouldBeAFile(this.fileSystem).WithContents(MoveRenameFileTests.TestFileContents);
-            (folder + @"\MoveUnhydratedFileToDotGitFolder\Program.cs").ShouldBeAFile(this.fileSystem).WithContents(MoveRenameFileTests.TestFileContents);
+            Path.Combine(folder, "ChangeNestedUnhydratedFileNameCase", "Program.cs").ShouldBeAFile(this.fileSystem).WithContents(MoveRenameFileTests.TestFileContents);
+            Path.Combine(folder, "ChangeUnhydratedFileName", "Program.cs").ShouldBeAFile(this.fileSystem).WithContents(MoveRenameFileTests.TestFileContents);
+            Path.Combine(folder, "MoveUnhydratedFileToDotGitFolder", "Program.cs").ShouldBeAFile(this.fileSystem).WithContents(MoveRenameFileTests.TestFileContents);
         }
 
         [TestCase, Order(15)]
@@ -497,7 +496,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 
         // TODO(Mac): Figure out why git for Mac is not requesting a redownload of the truncated object
         [TestCase, Order(17)]
-        [Category(Categories.MacTODO.M3)]
+        [Category(Categories.MacTODO.M4)]
         public void TruncatedObjectRedownloaded()
         {
             GitProcess.InvokeProcess(this.Enlistment.RepoRoot, "checkout " + this.Enlistment.Commitish);

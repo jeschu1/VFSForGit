@@ -1,6 +1,5 @@
 using GVFS.Common.FileSystem;
 using GVFS.Common.Tracing;
-using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -18,12 +17,24 @@ namespace GVFS.Common.Git
         private static readonly Encoding UTF8NoBOM = new UTF8Encoding(false);
         private static bool failedToSetEncoding = false;
 
+        /// <summary>
+        /// Lock taken for duration of running executingProcess.
+        /// </summary>
         private object executionLock = new object();
+
+        /// <summary>
+        /// Lock taken when changing the running state of executingProcess.
+        ///
+        /// Can be taken within executionLock.
+        /// </summary>
+        private object processLock = new object();
 
         private string gitBinPath;
         private string workingDirectoryRoot;
         private string dotGitRoot;
         private string gvfsHooksRoot;
+        private Process executingProcess;
+        private bool stopping;
 
         static GitProcess()
         {
@@ -77,11 +88,6 @@ namespace GVFS.Common.Git
             return new GitProcess(enlistment).InvokeGitOutsideEnlistment("init \"" + enlistment.WorkingDirectoryRoot + "\"");
         }
 
-        public static Result Version(Enlistment enlistment)
-        {
-            return new GitProcess(enlistment).InvokeGitOutsideEnlistment("--version");
-        }
-
         public static Result GetFromGlobalConfig(string gitBinPath, string settingName)
         {
             return new GitProcess(gitBinPath, workingDirectoryRoot: null, gvfsHooksRoot: null).InvokeGitOutsideEnlistment("config --global " + settingName);
@@ -90,6 +96,58 @@ namespace GVFS.Common.Git
         public static Result GetFromSystemConfig(string gitBinPath, string settingName)
         {
             return new GitProcess(gitBinPath, workingDirectoryRoot: null, gvfsHooksRoot: null).InvokeGitOutsideEnlistment("config --system " + settingName);
+        }
+
+        public static Result GetFromFileConfig(string gitBinPath, string configFile, string settingName)
+        {
+            return new GitProcess(gitBinPath, workingDirectoryRoot: null, gvfsHooksRoot: null).InvokeGitOutsideEnlistment("config --file " + configFile + " " + settingName);
+        }
+
+        public static bool TryGetVersion(string gitBinPath, out GitVersion gitVersion, out string error)
+        {
+            GitProcess gitProcess = new GitProcess(gitBinPath, null, null);
+            Result result = gitProcess.InvokeGitOutsideEnlistment("--version");
+            string version = result.Output;
+
+            if (result.HasErrors || !GitVersion.TryParseGitVersionCommandResult(version, out gitVersion))
+            {
+                gitVersion = null;
+                error = "Unable to determine installed git version. " + version;
+                return false;
+            }
+
+            error = null;
+            return true;
+        }
+
+        public bool TryKillRunningProcess()
+        {
+            this.stopping = true;
+
+            try
+            {
+                lock (this.processLock)
+                {
+                    Process process = this.executingProcess;
+
+                    if (process != null)
+                    {
+                        process.Kill();
+                    }
+
+                    return true;
+                }
+            }
+            catch (Win32Exception)
+            {
+                // Thrown when process is already terminating
+            }
+            catch (InvalidOperationException)
+            {
+                // Process already terminated
+            }
+
+            return false;
         }
 
         public virtual void RevokeCredential(string repoUrl)
@@ -104,15 +162,17 @@ namespace GVFS.Common.Git
             ITracer tracer,
             string repoUrl,
             out string username,
-            out string password)
+            out string password,
+            out string errorMessage)
         {
             username = null;
             password = null;
+            errorMessage = null;
 
             using (ITracer activity = tracer.StartActivity("TryGetCredentials", EventLevel.Informational))
             {
                 Result gitCredentialOutput = this.InvokeGitAgainstDotGitFolder(
-                    "credential fill",
+                    "-c " + GitConfigSetting.CredentialUseHttpPath + "=true credential fill",
                     stdin => stdin.Write("url=" + repoUrl + "\n\n"),
                     parseStdOutLine: null);
 
@@ -123,6 +183,7 @@ namespace GVFS.Common.Git
                         errorData,
                         "Git could not get credentials: " + gitCredentialOutput.Errors,
                         Keywords.Network | Keywords.Telemetry);
+                    errorMessage = gitCredentialOutput.Errors;
 
                     return false;
                 }
@@ -149,7 +210,7 @@ namespace GVFS.Common.Git
             Result result = this.InvokeGitAgainstDotGitFolder("rev-parse --show-toplevel");
             return !result.HasErrors;
         }
-                
+
         public Result RevParse(string gitRef)
         {
             return this.InvokeGitAgainstDotGitFolder("rev-parse " + gitRef);
@@ -178,6 +239,16 @@ namespace GVFS.Common.Git
         {
             return this.InvokeGitAgainstDotGitFolder(string.Format(
                 "config --local --add {0} {1}",
+                 settingName,
+                 value));
+        }
+
+        public Result SetInFileConfig(string configFile, string settingName, string value, bool replaceAll = false)
+        {
+            return this.InvokeGitOutsideEnlistment(string.Format(
+                "config --file {0} {1} \"{2}\" \"{3}\"",
+                 configFile,
+                 replaceAll ? "--replace-all " : string.Empty,
                  settingName,
                  value));
         }
@@ -333,14 +404,12 @@ namespace GVFS.Common.Git
         /// <summary>
         /// Write a new multi-pack-index (MIDX) in the specified pack directory.
         /// 
-        /// This will update the midx-head file to point to the new MIDX file.
-        /// 
         /// If no new packfiles are found, then this is a no-op.
         /// </summary>
-        public Result WriteMultiPackIndex(string packDir)
+        public Result WriteMultiPackIndex(string objectDir)
         {
             // We override the config settings so we keep writing the MIDX file even if it is disabled for reads.
-            return this.InvokeGitAgainstDotGitFolder("-c core.midx=true midx --write --update-head --pack-dir \"" + packDir + "\"");
+            return this.InvokeGitAgainstDotGitFolder("-c core.multiPackIndex=true multi-pack-index write --object-dir=\"" + objectDir + "\"");
         }
 
         public Result RemoteAdd(string remoteName, string url)
@@ -405,11 +474,24 @@ namespace GVFS.Common.Git
 
             // Removing trace variables that might change git output and break parsing
             // List of environment variables: https://git-scm.com/book/gr/v2/Git-Internals-Environment-Variables
-            foreach (string key in processInfo.EnvironmentVariables.Keys.Cast<string>()
-                .Where(x => x.StartsWith("GIT_TRACE", StringComparison.OrdinalIgnoreCase))
-                .ToList())
+            foreach (string key in processInfo.EnvironmentVariables.Keys.Cast<string>().ToList())
             {
-                processInfo.EnvironmentVariables.Remove(key);
+                // If GIT_TRACE is set to a fully-rooted path, then Git sends the trace
+                // output to that path instead of stdout (GIT_TRACE=1) or stderr (GIT_TRACE=2).
+                if (key.StartsWith("GIT_TRACE", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        if (!Path.IsPathRooted(processInfo.EnvironmentVariables[key]))
+                        {
+                            processInfo.EnvironmentVariables.Remove(key);
+                        }
+                    }
+                    catch (ArgumentException)
+                    {
+                        processInfo.EnvironmentVariables.Remove(key);
+                    }
+                }
             }
 
             processInfo.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
@@ -456,19 +538,19 @@ namespace GVFS.Common.Git
                 // From https://msdn.microsoft.com/en-us/library/system.diagnostics.process.standardoutput.aspx
                 // To avoid deadlocks, use asynchronous read operations on at least one of the streams.
                 // Do not perform a synchronous read to the end of both redirected streams.
-                using (Process executingProcess = this.GetGitProcess(command, workingDirectory, dotGitDirectory, useReadObjectHook, redirectStandardError: true))
+                using (this.executingProcess = this.GetGitProcess(command, workingDirectory, dotGitDirectory, useReadObjectHook, redirectStandardError: true))
                 {
                     StringBuilder output = new StringBuilder();
                     StringBuilder errors = new StringBuilder();
 
-                    executingProcess.ErrorDataReceived += (sender, args) =>
+                    this.executingProcess.ErrorDataReceived += (sender, args) =>
                     {
                         if (args.Data != null)
                         {
                             errors.Append(args.Data + "\n");
                         }
                     };
-                    executingProcess.OutputDataReceived += (sender, args) =>
+                    this.executingProcess.OutputDataReceived += (sender, args) =>
                     {
                         if (args.Data != null)
                         {
@@ -485,29 +567,39 @@ namespace GVFS.Common.Git
 
                     lock (this.executionLock)
                     {
-                        executingProcess.Start();
-
-                        if (writeStdIn != null)
+                        lock (this.processLock)
                         {
-                            writeStdIn(executingProcess.StandardInput);
+                            if (this.stopping)
+                            {
+                                return new Result(string.Empty, nameof(GitProcess) + " is stopping", Result.GenericFailureCode);
+                            }
+
+                            this.executingProcess.Start();
                         }
 
-                        executingProcess.BeginOutputReadLine();
-                        executingProcess.BeginErrorReadLine();
+                        writeStdIn?.Invoke(this.executingProcess.StandardInput);
 
-                        if (!executingProcess.WaitForExit(timeoutMs))
+                        this.executingProcess.BeginOutputReadLine();
+                        this.executingProcess.BeginErrorReadLine();
+
+                        if (!this.executingProcess.WaitForExit(timeoutMs))
                         {
-                            executingProcess.Kill();
+                            this.executingProcess.Kill();
+
                             return new Result(output.ToString(), "Operation timed out: " + errors.ToString(), Result.GenericFailureCode);
                         }
                     }
 
-                    return new Result(output.ToString(), errors.ToString(), executingProcess.ExitCode);
+                    return new Result(output.ToString(), errors.ToString(), this.executingProcess.ExitCode);
                 }
             }
             catch (Win32Exception e)
             {
                 return new Result(string.Empty, e.Message, Result.GenericFailureCode);
+            }
+            finally
+            {
+                this.executingProcess = null;
             }
         }
 
@@ -601,7 +693,7 @@ namespace GVFS.Common.Git
                 parseStdOutLine: parseStdOutLine,
                 timeoutMs: -1);
         }
-        
+
         public class Result
         {
             public const int SuccessCode = 0;

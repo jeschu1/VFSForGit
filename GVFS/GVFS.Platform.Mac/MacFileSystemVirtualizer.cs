@@ -8,6 +8,7 @@ using PrjFSLib.Mac;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Threading;
 
 namespace GVFS.Platform.Mac
@@ -15,6 +16,8 @@ namespace GVFS.Platform.Mac
     public class MacFileSystemVirtualizer : FileSystemVirtualizer
     {
         public static readonly byte[] PlaceholderVersionId = ToVersionIdByteArray(new byte[] { PlaceholderVersion });
+
+        private const int SymLinkTargetBufferSize = 4096;
 
         private const string ClassName = nameof(MacFileSystemVirtualizer);
 
@@ -50,6 +53,12 @@ namespace GVFS.Platform.Mac
                 case Result.EPathNotFound:
                     return FSResult.FileOrPathNotFound;
 
+                case Result.EDirectoryNotEmpty:
+                    return FSResult.DirectoryNotEmpty;
+
+                case Result.EVirtualizationInvalidOperation:
+                    return FSResult.VirtualizationInvalidOperation;
+
                 default:
                     return FSResult.IOError;
             }
@@ -80,15 +89,46 @@ namespace GVFS.Platform.Mac
             string sha)
         {
             // TODO(Mac): Add functional tests that validate file mode is set correctly
-            ushort fileMode = this.FileSystemCallbacks.GitIndexProjection.GetFilePathMode(relativePath);
-            Result result = this.virtualizationInstance.WritePlaceholderFile(
-                relativePath,
-                PlaceholderVersionId,
-                ToVersionIdByteArray(FileSystemVirtualizer.ConvertShaToContentId(sha)),
-                (ulong)endOfFile,
-                fileMode);
+            GitIndexProjection.FileType fileType;
+            ushort fileMode;
+            this.FileSystemCallbacks.GitIndexProjection.GetFileTypeAndMode(relativePath, out fileType, out fileMode);
 
-            return new FileSystemResult(ResultToFSResult(result), unchecked((int)result));
+            if (fileType == GitIndexProjection.FileType.Regular)
+            {
+                Result result = this.virtualizationInstance.WritePlaceholderFile(
+                    relativePath,
+                    PlaceholderVersionId,
+                    ToVersionIdByteArray(FileSystemVirtualizer.ConvertShaToContentId(sha)),
+                    (ulong)endOfFile,
+                    fileMode);
+
+                return new FileSystemResult(ResultToFSResult(result), unchecked((int)result));
+            }
+            else if (fileType == GitIndexProjection.FileType.SymLink)
+            {
+                string symLinkTarget;
+                if (this.TryGetSymLinkTarget(sha, out symLinkTarget))
+                {
+                    Result result = this.virtualizationInstance.WriteSymLink(relativePath, symLinkTarget);
+
+                    this.FileSystemCallbacks.OnFileSymLinkCreated(relativePath);
+
+                    return new FileSystemResult(ResultToFSResult(result), unchecked((int)result));
+                }
+
+                EventMetadata metadata = this.CreateEventMetadata(relativePath);
+                metadata.Add(nameof(sha), sha);
+                this.Context.Tracer.RelatedError(metadata, $"{nameof(this.WritePlaceholderFile)}: Failed to read contents of symlink object");
+                return new FileSystemResult(FSResult.IOError, 0);
+            }
+            else
+            {
+                EventMetadata metadata = this.CreateEventMetadata(relativePath);
+                metadata.Add(nameof(fileType), fileType);
+                metadata.Add(nameof(fileMode), fileMode);
+                this.Context.Tracer.RelatedError(metadata, $"{nameof(this.WritePlaceholderFile)}: Unsupported fileType");
+                return new FileSystemResult(FSResult.IOError, 0);
+            }
         }
 
         public override FileSystemResult WritePlaceholderDirectory(string relativePath)
@@ -114,18 +154,56 @@ namespace GVFS.Platform.Mac
             // TODO(Mac): Add functional tests that include:
             //     - Mode + content changes between commits
             //     - Mode only changes (without any change to content, see issue #223)
-            ushort fileMode = this.FileSystemCallbacks.GitIndexProjection.GetFilePathMode(relativePath);
+            GitIndexProjection.FileType fileType;
+            ushort fileMode;
+            this.FileSystemCallbacks.GitIndexProjection.GetFileTypeAndMode(relativePath, out fileType, out fileMode);
 
-            Result result = this.virtualizationInstance.UpdatePlaceholderIfNeeded(
-                relativePath,
-                PlaceholderVersionId,
-                ToVersionIdByteArray(ConvertShaToContentId(shaContentId)),
-                (ulong)endOfFile,
-                fileMode,
-                (UpdateType)updateFlags,
-                out failureCause);
-            failureReason = (UpdateFailureReason)failureCause;
-            return new FileSystemResult(ResultToFSResult(result), unchecked((int)result));
+            if (fileType == GitIndexProjection.FileType.Regular)
+            {
+                Result result = this.virtualizationInstance.UpdatePlaceholderIfNeeded(
+                    relativePath,
+                    PlaceholderVersionId,
+                    ToVersionIdByteArray(ConvertShaToContentId(shaContentId)),
+                    (ulong)endOfFile,
+                    fileMode,
+                    (UpdateType)updateFlags,
+                    out failureCause);
+                
+                failureReason = (UpdateFailureReason)failureCause;
+                return new FileSystemResult(ResultToFSResult(result), unchecked((int)result));
+            }
+            else if (fileType == GitIndexProjection.FileType.SymLink)
+            {
+                string symLinkTarget;
+                if (this.TryGetSymLinkTarget(shaContentId, out symLinkTarget))
+                {
+                    Result result = this.virtualizationInstance.ReplacePlaceholderFileWithSymLink(
+                        relativePath,
+                        symLinkTarget,
+                        (UpdateType)updateFlags,
+                        out failureCause);
+
+                    this.FileSystemCallbacks.OnFileSymLinkCreated(relativePath);
+
+                    failureReason = (UpdateFailureReason)failureCause;
+                    return new FileSystemResult(ResultToFSResult(result), unchecked((int)result));
+                }
+
+                EventMetadata metadata = this.CreateEventMetadata(relativePath);
+                metadata.Add(nameof(shaContentId), shaContentId);
+                this.Context.Tracer.RelatedError(metadata, $"{nameof(this.UpdatePlaceholderIfNeeded)}: Failed to read contents of symlink object");
+                failureReason = UpdateFailureReason.NoFailure;
+                return new FileSystemResult(FSResult.IOError, 0);
+            }
+            else
+            {
+                EventMetadata metadata = this.CreateEventMetadata(relativePath);
+                metadata.Add(nameof(fileType), fileType);
+                metadata.Add(nameof(fileMode), fileMode);
+                this.Context.Tracer.RelatedError(metadata, $"{nameof(this.UpdatePlaceholderIfNeeded)}: Unsupported fileType");
+                failureReason = UpdateFailureReason.NoFailure;
+                return new FileSystemResult(FSResult.IOError, 0);
+            }
         }
 
         protected override bool TryStart(out string error)
@@ -163,6 +241,86 @@ namespace GVFS.Platform.Mac
             byte[] bytes = new byte[VirtualizationInstance.PlaceholderIdLength];
             Buffer.BlockCopy(version, 0, bytes, 0, version.Length);
             return bytes;
+        }
+
+        /// <summary>
+        /// Gets the target of the symbolic link. 
+        /// </summary>
+        /// <param name="sha">SHA of the loose object containing the target path of the symbolic link</param>
+        /// <param name="symLinkTarget">Target path of the symbolic link</param>
+        private bool TryGetSymLinkTarget(string sha, out string symLinkTarget)
+        {
+            symLinkTarget = null;
+
+            string symLinkBlobContents = null;
+            try
+            {
+                if (!this.GitObjects.TryCopyBlobContentStream(
+                    sha,
+                    CancellationToken.None,
+                    GVFSGitObjects.RequestSource.SymLinkCreation,
+                    (stream, blobLength) =>
+                    {
+                        byte[] buffer = new byte[SymLinkTargetBufferSize];
+                        uint bufferIndex = 0;
+
+                        // TODO(Mac): Find a better solution than reading from the stream one byte at at time
+                        int nextByte = stream.ReadByte();
+                        while (nextByte != -1)
+                        {
+                            while (bufferIndex < buffer.Length && nextByte != -1)
+                            {
+                                buffer[bufferIndex] = (byte)nextByte;
+                                nextByte = stream.ReadByte();
+                                ++bufferIndex;
+                            }
+
+                            if (bufferIndex < buffer.Length)
+                            {
+                                buffer[bufferIndex] = 0;
+                                symLinkBlobContents = Encoding.UTF8.GetString(buffer);
+                            }
+                            else
+                            {
+                                buffer[bufferIndex - 1] = 0;
+
+                                EventMetadata metadata = this.CreateEventMetadata();
+                                metadata.Add(nameof(sha), sha);
+                                metadata.Add("bufferContents", Encoding.UTF8.GetString(buffer));
+                                this.Context.Tracer.RelatedError(metadata, $"{nameof(this.TryGetSymLinkTarget)}: SymLink target exceeds buffer size");
+
+                                throw new GetSymLinkTargetException("SymLink target exceeds buffer size");;
+                            }
+                        }
+                    }))
+                {
+                    EventMetadata metadata = this.CreateEventMetadata();
+                    metadata.Add(nameof(sha), sha);
+                    this.Context.Tracer.RelatedError(metadata, $"{nameof(this.TryGetSymLinkTarget)}: TryCopyBlobContentStream failed");
+
+                    return false;
+                }
+            }
+            catch (GetSymLinkTargetException e)
+            {
+                EventMetadata metadata = this.CreateEventMetadata(relativePath: null, exception: e);
+                metadata.Add(nameof(sha), sha);
+                this.Context.Tracer.RelatedError(metadata, $"{nameof(this.TryGetSymLinkTarget)}: TryCopyBlobContentStream caught GetSymLinkTargetException");
+
+                return false;
+            }
+            catch (DecoderFallbackException e)
+            {
+                EventMetadata metadata = this.CreateEventMetadata(relativePath: null, exception: e);
+                metadata.Add(nameof(sha), sha);
+                this.Context.Tracer.RelatedError(metadata, $"{nameof(this.TryGetSymLinkTarget)}: TryCopyBlobContentStream caught DecoderFallbackException");
+
+                return false;
+            }
+
+            symLinkTarget = symLinkBlobContents;
+
+            return true;
         }
 
         private Result OnGetFileStream(
@@ -258,7 +416,7 @@ namespace GVFS.Platform.Mac
                     {
                         activity.RelatedError(metadata, $"{nameof(this.OnGetFileStream)}: TryCopyBlobContentStream failed");
 
-                        // TODO: Is this the correct Result to return?
+                        // TODO(Mac): Is this the correct Result to return?
                         return Result.EFileNotFound;
                     }
                 }
@@ -352,7 +510,7 @@ namespace GVFS.Platform.Mac
                 }
                 else
                 {
-                    this.OnWorkingDirectoryFileOrFolderDeleted(relativePath, isDirectory);
+                    this.OnWorkingDirectoryFileOrFolderDeleteNotification(relativePath, isDirectory, isPreDelete: true);
                 }
             }
             catch (Exception e)
@@ -373,13 +531,23 @@ namespace GVFS.Platform.Mac
                 {
                     if (isDirectory)
                     {
-                        GitCommandLineParser gitCommand = new GitCommandLineParser(this.Context.Repository.GVFSLock.GetLockedGitCommand());
+                        string lockedGitCommand = this.Context.Repository.GVFSLock.GetLockedGitCommand();
+                        GitCommandLineParser gitCommand = new GitCommandLineParser(lockedGitCommand);
                         if (gitCommand.IsValidGitCommand)
                         {
-                            // TODO(Mac): Ensure that when git creates a folder all files\folders within that folder are written to disk
                             EventMetadata metadata = this.CreateEventMetadata(relativePath);
-                            metadata.Add("isDirectory", isDirectory);
-                            this.Context.Tracer.RelatedWarning(metadata, $"{nameof(this.OnNewFileCreated)}: Git created a folder, currently an unsupported scenario on Mac");
+                            metadata.Add(nameof(lockedGitCommand), lockedGitCommand);
+                            metadata.Add(TracingConstants.MessageKey.InfoMessage, "Git command created new folder");
+                            this.Context.Tracer.RelatedEvent(EventLevel.Informational, $"{nameof(this.OnNewFileCreated)}_GitCreatedFolder", metadata);
+
+                            // Record this folder as expanded so that GitIndexProjection will re-expand the folder
+                            // when the projection change completes.  
+                            // 
+                            // Git creates new folders when there are files that it needs to create.
+                            // However, git will only create files that are in ModifiedPaths.dat.  There could
+                            // be other files in the projection (that were not created by git) and so VFS must re-expand the
+                            // newly created folder to ensure that all files are written to disk.
+                            this.FileSystemCallbacks.OnPlaceholderFolderExpanded(relativePath);
                         }
                         else
                         {
@@ -535,6 +703,14 @@ namespace GVFS.Platform.Mac
             }
 
             public Result Result { get; }
+        }
+
+        private class GetSymLinkTargetException : Exception
+        {
+            public GetSymLinkTargetException(string message)
+                : base(message)
+            {
+            }
         }
     }
 }

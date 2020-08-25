@@ -8,7 +8,7 @@ using System.Runtime.CompilerServices;
 
 namespace GVFS.FunctionalTests.Tests.GitCommands
 {
-    [TestFixture]
+    [TestFixtureSource(typeof(GitRepoTests), nameof(GitRepoTests.ValidateWorkingTree))]
     [Category(Categories.GitCommands)]
     public class GitCommandsTests : GitRepoTests
     {
@@ -16,6 +16,8 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         private const string EncodingFilename = "ريلٌأكتوبرûمارسأغسطسºٰٰۂْٗ۵ريلٌأك.txt";
         private const string ContentWhenEditingFile = "// Adding a comment to the file";
         private const string UnknownTestName = "Unknown";
+        private const string TopLevelFolderToCreate = "level1";
+        private const string SubFolderToCreate = "level2";
 
         private static readonly string EditFilePath = Path.Combine("GVFS", "GVFS.Common", "GVFSContext.cs");
         private static readonly string DeleteFilePath = Path.Combine("GVFS", "GVFS", "Program.cs");
@@ -24,7 +26,8 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         private static readonly string RenameFolderPathFrom = Path.Combine("GVFS", "GVFS.Common", "PrefetchPacks");
         private static readonly string RenameFolderPathTo = Path.Combine("GVFS", "GVFS.Common", "PrefetchPacksRenamed");
        
-        public GitCommandsTests() : base(enlistmentPerTest: false)
+        public GitCommandsTests(bool validateWorkingTree) 
+            : base(enlistmentPerTest: false, validateWorkingTree: validateWorkingTree)
         {
         }
 
@@ -382,6 +385,16 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         }
 
         [TestCase]
+        public void CommitWithNewlinesInMessage()
+        {
+            this.ValidateGitCommand("checkout -b tests/functional/commit_with_uncommon_arguments");
+            this.CreateFile();
+            this.ValidateGitCommand("status");
+            this.ValidateGitCommand("add .");
+            this.RunGitCommand("commit -m \"Message that contains \na\nnew\nline\"");
+        }
+
+        [TestCase]
         public void CaseOnlyRenameFileAndChangeBranches()
         {
             // 693190 - Confirm that file does not disappear after case-only rename and branch
@@ -479,7 +492,7 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
 
             // Confirm that no other test has caused "Protocol.md" to be added to the modified paths
             string fileName = "Protocol.md";
-            GVFSHelpers.ModifiedPathsShouldNotContain(this.FileSystem, this.Enlistment.DotGVFSRoot, fileName);
+            GVFSHelpers.ModifiedPathsShouldNotContain(this.Enlistment, this.FileSystem, fileName);
 
             string controlTargetFolder = "MoveFileFromInsideRepoToOutsideRepoAndCommit_ControlTarget";
             string gvfsTargetFolder = "MoveFileFromInsideRepoToOutsideRepoAndCommit_GVFSTarget";
@@ -540,7 +553,6 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         // MacOnly because renames of partial folders are blocked on Windows
         [TestCase]
         [Category(Categories.MacOnly)]
-        [Category(Categories.MacTODO.M3)]
         public void MoveFolderCommitChangesSwitchBranchSwitchBackTest()
         {
             this.CommitChangesSwitchBranchSwitchBack(fileSystemAction: this.MoveFolder);
@@ -716,7 +728,6 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         }
 
         [TestCase]
-        [Category(Categories.MacTODO.M3)]
         public void ResetMixed()
         {
             this.ValidateGitCommand("checkout -b tests/functional/ResetMixed");
@@ -724,7 +735,6 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         }
 
         [TestCase]
-        [Category(Categories.MacTODO.M3)]
         public void ResetMixed2()
         {
             this.ValidateGitCommand("checkout -b tests/functional/ResetMixed2");
@@ -970,15 +980,17 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         {
             this.ValidateGitCommand("checkout -b tests/functional/EditFileNeedingUtf8Encoding");
             this.ValidateGitCommand("status");
+
             string virtualFile = Path.Combine(this.Enlistment.RepoRoot, EncodingFileFolder, EncodingFilename);
             string controlFile = Path.Combine(this.ControlGitRepo.RootPath, EncodingFileFolder, EncodingFilename);
+            string relativeGitPath = EncodingFileFolder + "/" + EncodingFilename;
 
             string contents = virtualFile.ShouldBeAFile(this.FileSystem).WithContents();
             string expectedContents = controlFile.ShouldBeAFile(this.FileSystem).WithContents();
             contents.ShouldEqual(expectedContents);
 
             // Confirm that the entry is not in the the modified paths database
-            GVFSHelpers.ModifiedPathsShouldNotContain(this.FileSystem, this.Enlistment.DotGVFSRoot, EncodingFilename);
+            GVFSHelpers.ModifiedPathsShouldNotContain(this.Enlistment, this.FileSystem, relativeGitPath);
             this.ValidateGitCommand("status");
 
             this.AppendAllText(ContentWhenEditingFile, virtualFile);
@@ -987,7 +999,7 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
             this.ValidateGitCommand("status");
 
             // Confirm that the entry was added to the modified paths database
-            GVFSHelpers.ModifiedPathsShouldContain(this.FileSystem, this.Enlistment.DotGVFSRoot, EncodingFilename);
+            GVFSHelpers.ModifiedPathsShouldContain(this.Enlistment, this.FileSystem, relativeGitPath);
         }
 
         [TestCase]
@@ -998,7 +1010,6 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         }
 
         [TestCase]
-        [Category(Categories.MacTODO.M3)]
         public void RenameOnlyFileInFolder()
         {
             ControlGitRepo.Fetch("FunctionalTests/20170202_RenameTestMergeTarget");
@@ -1031,7 +1042,7 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
             fileSystemAction();
             this.ValidateGitCommand("status");
             this.ValidateGitCommand(addCommand);
-            this.RunGitCommand("commit -m \"BasicCommit for {test}\"");
+            this.RunGitCommand($"commit -m \"BasicCommit for {test}\"");
         }
 
         private void SwitchBranch(Action fileSystemAction, [CallerMemberName]string test = GitCommandsTests.UnknownTestName)
@@ -1076,6 +1087,9 @@ namespace GVFS.FunctionalTests.Tests.GitCommands
         private void CreateFile()
         {
             this.CreateFile("Some content here", Path.GetRandomFileName() + "tempFile.txt");
+            this.CreateFolder(TopLevelFolderToCreate);
+            this.CreateFolder(Path.Combine(TopLevelFolderToCreate, SubFolderToCreate));
+            this.CreateFile("File in new folder", Path.Combine(TopLevelFolderToCreate, SubFolderToCreate, Path.GetRandomFileName() + "folderFile.txt"));
         }
 
         private void EditFile()

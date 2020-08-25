@@ -7,11 +7,13 @@
 
 #include "PrjFSCommon.h"
 #include "VirtualizationRoots.hpp"
+#include "VnodeUtilities.hpp"
 #include "KauthHandler.hpp"
 #include "KextLog.hpp"
 #include "Message.h"
 #include "Locks.hpp"
 #include "PrjFSProviderUserClient.hpp"
+#include "PerformanceTracing.hpp"
 
 // Function prototypes
 static int HandleVnodeOperation(
@@ -32,22 +34,21 @@ static int HandleFileOpOperation(
     uintptr_t       arg2,
     uintptr_t       arg3);
 
-static int GetPid(vfs_context_t context);
+static int GetPid(vfs_context_t _Nonnull context);
 
-static uint32_t ReadVNodeFileFlags(vnode_t vn, vfs_context_t context);
+static bool TryReadVNodeFileFlags(vnode_t vn, vfs_context_t _Nonnull context, uint32_t* flags);
 static inline bool FileFlagsBitIsSet(uint32_t fileFlags, uint32_t bit);
-static inline bool FileIsFlaggedAsInRoot(vnode_t vnode, vfs_context_t context);
+static inline bool TryGetFileIsFlaggedAsInRoot(vnode_t vnode, vfs_context_t _Nonnull context, bool* flaggedInRoot);
 static inline bool ActionBitIsSet(kauth_action_t action, kauth_action_t mask);
 
 static bool IsFileSystemCrawler(char* procname);
 
-static const char* GetRelativePath(const char* path, const char* root);
-
 static void Sleep(int seconds, void* channel);
 static bool TrySendRequestAndWaitForResponse(
-    const VirtualizationRoot* root,
+    VirtualizationRootHandle root,
     MessageType messageType,
     const vnode_t vnode,
+    const FsidInode& vnodeFsidInode,
     const char* vnodePath,
     int pid,
     const char* procname,
@@ -58,26 +59,30 @@ static bool ShouldIgnoreVnodeType(vtype vnodeType, vnode_t vnode);
 
 static bool ShouldHandleVnodeOpEvent(
     // In params:
-    vfs_context_t context,
+    vfs_context_t _Nonnull context,
     const vnode_t vnode,
     kauth_action_t action,
+    ProfileSample& operationSample,
 
     // Out params:
-    VirtualizationRoot** root,
+    VirtualizationRootHandle* root,
     vtype* vnodeType,
     uint32_t* vnodeFileFlags,
+    FsidInode* vnodeFsidInode,
     int* pid,
     char procname[MAXCOMLEN + 1],
-    int* kauthResult);
+    int* kauthResult,
+    int* kauthError);
 
 static bool ShouldHandleFileOpEvent(
     // In params:
-    vfs_context_t context,
+    vfs_context_t _Nonnull context,
     const vnode_t vnode,
     kauth_action_t action,
 
     // Out params:
-    VirtualizationRoot** root,
+    VirtualizationRootHandle* root,
+    FsidInode* vnodeFsidInode,
     int* pid);
 
 // Structs
@@ -223,6 +228,7 @@ void KauthHandler_HandleKernelMessageResponse(uint64_t messageId, MessageType re
         case MessageType_UtoK_StartVirtualizationInstance:
         case MessageType_UtoK_StopVirtualizationInstance:
         case MessageType_KtoU_EnumerateDirectory:
+        case MessageType_KtoU_RecursivelyEnumerateDirectory:
         case MessageType_KtoU_HydrateFile:
         case MessageType_KtoU_NotifyFileModified:
         case MessageType_KtoU_NotifyFilePreDelete:
@@ -249,22 +255,39 @@ static int HandleVnodeOperation(
     uintptr_t       arg3)
 {
     atomic_fetch_add(&s_numActiveKauthEvents, 1);
+
+    ProfileSample functionSample(Probe_VnodeOp);
     
-    vfs_context_t context = reinterpret_cast<vfs_context_t>(arg0);
+    vfs_context_t _Nonnull context = reinterpret_cast<vfs_context_t>(arg0);
     vnode_t currentVnode =  reinterpret_cast<vnode_t>(arg1);
     // arg2 is the (vnode_t) parent vnode
     int* kauthError =       reinterpret_cast<int*>(arg3);
     int kauthResult = KAUTH_RESULT_DEFER;
+    bool putVnodeWhenDone = false;
+
+    // A lot of our file checks such as attribute tests behave oddly if the vnode
+    // refers to a named fork/stream; apply the logic as if the vnode operation was
+    // occurring on the file itself. (/path/to/file/..namedfork/rsrc)
+    if (vnode_isnamedstream(currentVnode))
+    {
+        vnode_t mainFileFork = vnode_getparent(currentVnode);
+        assert(NULLVP != mainFileFork);
+        currentVnode = mainFileFork;
+        putVnodeWhenDone = true;
+    }
 
     const char* vnodePath = nullptr;
     char vnodePathBuffer[PrjFSMaxPath];
     int vnodePathLength = PrjFSMaxPath;
 
-    VirtualizationRoot* root = nullptr;
+    VirtualizationRootHandle root = RootHandle_None;
     vtype vnodeType;
     uint32_t currentVnodeFileFlags;
+    FsidInode vnodeFsidInode;
     int pid;
     char procname[MAXCOMLEN + 1];
+    bool isDeleteAction = false;
+    bool isDirectory = false;
     
     // TODO(Mac): Issue #271 - Reduce reliance on vn_getpath
     // Call vn_getpath first when the cache is hottest to increase the chances
@@ -278,17 +301,42 @@ static int HandleVnodeOperation(
             context,
             currentVnode,
             action,
+            functionSample,
             &root,
             &vnodeType,
             &currentVnodeFileFlags,
+            &vnodeFsidInode,
             &pid,
             procname,
-            &kauthResult))
+            &kauthResult,
+            kauthError))
     {
         goto CleanupAndReturn;
     }
     
-    if (VDIR == vnodeType)
+    isDeleteAction = ActionBitIsSet(action, KAUTH_VNODE_DELETE);
+    isDirectory = VDIR == vnodeType;
+    
+    if (isDeleteAction)
+    {
+        if (!TrySendRequestAndWaitForResponse(
+                root,
+                isDirectory ?
+                    MessageType_KtoU_NotifyDirectoryPreDelete :
+                    MessageType_KtoU_NotifyFilePreDelete,
+                currentVnode,
+                vnodeFsidInode,
+                vnodePath,
+                pid,
+                procname,
+                &kauthResult,
+                kauthError))
+        {
+            goto CleanupAndReturn;
+        }
+    }
+    
+    if (isDirectory)
     {
         if (ActionBitIsSet(
                 action,
@@ -296,14 +344,21 @@ static int HandleVnodeOperation(
                 KAUTH_VNODE_SEARCH |
                 KAUTH_VNODE_READ_SECURITY |
                 KAUTH_VNODE_READ_ATTRIBUTES |
-                KAUTH_VNODE_READ_EXTATTRIBUTES))
+                KAUTH_VNODE_READ_EXTATTRIBUTES |
+                KAUTH_VNODE_DELETE))
         {
-            if (FileFlagsBitIsSet(currentVnodeFileFlags, FileFlags_IsEmpty))
+            // Recursively expand directory on delete to ensure child placeholders are created before rename operations
+            if (isDeleteAction || FileFlagsBitIsSet(currentVnodeFileFlags, FileFlags_IsEmpty))
             {
+                functionSample.SetProbe(Probe_VnodeOp_PopulatePlaceholderDirectory);
+
                 if (!TrySendRequestAndWaitForResponse(
                         root,
-                        MessageType_KtoU_EnumerateDirectory,
+                        isDeleteAction ?
+                            MessageType_KtoU_RecursivelyEnumerateDirectory :
+                            MessageType_KtoU_EnumerateDirectory,
                         currentVnode,
+                        vnodeFsidInode,
                         vnodePath,
                         pid,
                         procname,
@@ -314,41 +369,9 @@ static int HandleVnodeOperation(
                 }
             }
         }
-        
-        if (ActionBitIsSet(action, KAUTH_VNODE_DELETE))
-        {
-            if (!TrySendRequestAndWaitForResponse(
-                    root,
-                    MessageType_KtoU_NotifyDirectoryPreDelete,
-                    currentVnode,
-                    vnodePath,
-                    pid,
-                    procname,
-                    &kauthResult,
-                    kauthError))
-            {
-                goto CleanupAndReturn;
-            }
-        }
     }
     else
     {
-        if (ActionBitIsSet(action, KAUTH_VNODE_DELETE))
-        {
-            if (!TrySendRequestAndWaitForResponse(
-                    root,
-                    MessageType_KtoU_NotifyFilePreDelete,
-                    currentVnode,
-                    vnodePath,
-                    pid,
-                    procname,
-                    &kauthResult,
-                    kauthError))
-            {
-                goto CleanupAndReturn;
-            }
-        }
-        
         if (ActionBitIsSet(
                 action,
                 KAUTH_VNODE_READ_ATTRIBUTES |
@@ -362,10 +385,13 @@ static int HandleVnodeOperation(
         {
             if (FileFlagsBitIsSet(currentVnodeFileFlags, FileFlags_IsEmpty))
             {
+                functionSample.SetProbe(Probe_VnodeOp_HydratePlaceholderFile);
+
                 if (!TrySendRequestAndWaitForResponse(
                         root,
                         MessageType_KtoU_HydrateFile,
                         currentVnode,
+                        vnodeFsidInode,
                         vnodePath,
                         pid,
                         procname,
@@ -379,6 +405,11 @@ static int HandleVnodeOperation(
     }
     
 CleanupAndReturn:
+    if (putVnodeWhenDone)
+    {
+        vnode_put(currentVnode);
+    }
+    
     atomic_fetch_sub(&s_numActiveKauthEvents, 1);
     return kauthResult;
 }
@@ -396,14 +427,16 @@ static int HandleFileOpOperation(
 {
     atomic_fetch_add(&s_numActiveKauthEvents, 1);
     
-    vfs_context_t context = vfs_context_create(NULL);
+    ProfileSample functionSample(Probe_FileOp);
+
+    vfs_context_t _Nonnull context = vfs_context_create(NULL);
     vnode_t currentVnodeFromPath = NULLVP;
 
     if (KAUTH_FILEOP_RENAME == action ||
         KAUTH_FILEOP_LINK == action)
     {
         // arg0 is the (const char *) fromPath (or the file being linked to)
-        const char* newPath = (const char*)arg1;
+        const char* newPath = reinterpret_cast<const char*>(arg1);
         
         // TODO(Mac): We need to handle failures to lookup the vnode.  If we fail to lookup the vnode
         // it's possible that we'll miss notifications
@@ -413,13 +446,15 @@ static int HandleFileOpOperation(
             goto CleanupAndReturn;
         }
         
-        VirtualizationRoot* root = nullptr;
+        VirtualizationRootHandle root = RootHandle_None;
+        FsidInode vnodeFsidInode;
         int pid;
         if (!ShouldHandleFileOpEvent(
                 context,
                 currentVnodeFromPath,
                 action,
                 &root,
+                &vnodeFsidInode,
                 &pid))
         {
             goto CleanupAndReturn;
@@ -444,6 +479,7 @@ static int HandleFileOpOperation(
                 root,
                 messageType,
                 currentVnodeFromPath,
+                vnodeFsidInode,
                 newPath,
                 pid,
                 procname,
@@ -456,7 +492,7 @@ static int HandleFileOpOperation(
     else if (KAUTH_FILEOP_CLOSE == action)
     {
         vnode_t currentVnode = reinterpret_cast<vnode_t>(arg0);
-        const char* path = (const char*)arg1;
+        const char* path = reinterpret_cast<const char*>(arg1);
         int closeFlags = static_cast<int>(arg2);
         
         if (vnode_isdir(currentVnode))
@@ -464,19 +500,27 @@ static int HandleFileOpOperation(
             goto CleanupAndReturn;
         }
 
-        bool fileFlaggedInRoot = FileIsFlaggedAsInRoot(currentVnode, context);
+        bool fileFlaggedInRoot;
+        if (!TryGetFileIsFlaggedAsInRoot(currentVnode, context, &fileFlaggedInRoot))
+        {
+            KextLog_Info("Failed to read attributes when handling FileOp operation. Path is %s", path);
+            goto CleanupAndReturn;
+        }
+        
         if (fileFlaggedInRoot && KAUTH_FILEOP_CLOSE_MODIFIED != closeFlags)
         {
             goto CleanupAndReturn;
         }
             
-        VirtualizationRoot* root = nullptr;
+        VirtualizationRootHandle root = RootHandle_None;
+        FsidInode vnodeFsidInode;
         int pid;
         if (!ShouldHandleFileOpEvent(
                 context,
                 currentVnode,
                 action,
                 &root,
+                &vnodeFsidInode,
                 &pid))
         {
             goto CleanupAndReturn;
@@ -493,6 +537,7 @@ static int HandleFileOpOperation(
                     root,
                     MessageType_KtoU_NotifyFileModified,
                     currentVnode,
+                    vnodeFsidInode,
                     path,
                     pid,
                     procname,
@@ -510,6 +555,7 @@ static int HandleFileOpOperation(
                     root,
                     MessageType_KtoU_NotifyFileCreated,
                     currentVnode,
+                    vnodeFsidInode,
                     path,
                     pid,
                     procname,
@@ -537,23 +583,27 @@ CleanupAndReturn:
 
 static bool ShouldHandleVnodeOpEvent(
     // In params:
-    vfs_context_t context,
+    vfs_context_t _Nonnull context,
     const vnode_t vnode,
     kauth_action_t action,
+    ProfileSample& operationSample,
 
     // Out params:
-    VirtualizationRoot** root,
+    VirtualizationRootHandle* root,
     vtype* vnodeType,
     uint32_t* vnodeFileFlags,
+    FsidInode* vnodeFsidInode,
     int* pid,
     char procname[MAXCOMLEN + 1],
-    int* kauthResult)
+    int* kauthResult,
+    int* kauthError)
 {
-    *root = nullptr;
     *kauthResult = KAUTH_RESULT_DEFER;
+    *root = RootHandle_None;
     
     if (!VirtualizationRoot_VnodeIsOnAllowedFilesystem(vnode))
     {
+        operationSample.SetProbe(Probe_Op_EarlyOut);
         *kauthResult = KAUTH_RESULT_DEFER;
         return false;
     }
@@ -561,16 +611,27 @@ static bool ShouldHandleVnodeOpEvent(
     *vnodeType = vnode_vtype(vnode);
     if (ShouldIgnoreVnodeType(*vnodeType, vnode))
     {
+        operationSample.SetProbe(Probe_Op_EarlyOut);
         *kauthResult = KAUTH_RESULT_DEFER;
         return false;
     }
     
-    *vnodeFileFlags = ReadVNodeFileFlags(vnode, context);
+    {
+        ProfileSample readflags(Probe_ReadFileFlags);
+        if (!TryReadVNodeFileFlags(vnode, context, vnodeFileFlags))
+        {
+            *kauthError = EBADF;
+            *kauthResult = KAUTH_RESULT_DENY;
+            return false;
+        }
+    }
+
     if (!FileFlagsBitIsSet(*vnodeFileFlags, FileFlags_IsInVirtualizationRoot))
     {
         // This vnode is not part of ANY virtualization root, so exit now before doing any more work.
         // This gives us a cheap way to avoid adding overhead to IO outside of a virtualization root.
         
+        operationSample.SetProbe(Probe_Op_NoVirtualizationRootFlag);
         *kauthResult = KAUTH_RESULT_DEFER;
         return false;
     }
@@ -590,24 +651,35 @@ static bool ShouldHandleVnodeOpEvent(
             // get called again, so we lose the opportunity to hydrate the file/directory and it will appear as though
             // it is missing its contents.
             
+            operationSample.SetProbe(Probe_Op_DenyCrawler);
             *kauthResult = KAUTH_RESULT_DENY;
             return false;
         }
+
+        operationSample.SetProbe(Probe_Op_EmptyFlag);
     }
     
-    *root = VirtualizationRoots_FindForVnode(vnode);
+    operationSample.TakeSplitSample(Probe_Op_IdentifySplit);
+
+    *vnodeFsidInode = Vnode_GetFsidAndInode(vnode, context);
+    *root = VirtualizationRoot_FindForVnode(vnode, *vnodeFsidInode);
     
-    if (nullptr == *root)
+    operationSample.TakeSplitSample(Probe_Op_VirtualizationRootFindSplit);
+
+    if (RootHandle_ProviderTemporaryDirectory == *root)
+    {
+        *kauthResult = KAUTH_RESULT_DEFER;
+        return false;
+    }
+    else if (RootHandle_None == *root)
     {
         KextLog_FileNote(vnode, "No virtualization root found for file with set flag.");
         
         *kauthResult = KAUTH_RESULT_DEFER;
         return false;
     }
-    else if (nullptr == (*root)->providerUserClient)
+    else if (!VirtualizationRoot_IsOnline(*root))
     {
-        // There is no registered provider for this root
-        
         // TODO(Mac): Protect files in the worktree from modification (and prevent
         // the creation of new files) when the provider is offline
         
@@ -616,8 +688,9 @@ static bool ShouldHandleVnodeOpEvent(
     }
     
     // If the calling process is the provider, we must exit right away to avoid deadlocks
-    if (*pid == (*root)->providerPid)
+    if (VirtualizationRoot_PIDMatchesProvider(*root, *pid))
     {
+        operationSample.SetProbe(Probe_Op_Provider);
         *kauthResult = KAUTH_RESULT_DEFER;
         return false;
     }
@@ -632,30 +705,35 @@ static bool ShouldHandleFileOpEvent(
     kauth_action_t action,
 
     // Out params:
-    VirtualizationRoot** root,
+    VirtualizationRootHandle* root,
+    FsidInode* vnodeFsidInode,
     int* pid)
 {
+    *root = RootHandle_None;
+
+    if (!VirtualizationRoot_VnodeIsOnAllowedFilesystem(vnode))
+    {
+        return false;
+    }
+
     vtype vnodeType = vnode_vtype(vnode);
     if (ShouldIgnoreVnodeType(vnodeType, vnode))
     {
         return false;
     }
-
-    *root = VirtualizationRoots_FindForVnode(vnode);
-    if (nullptr == *root)
+    
+    *vnodeFsidInode = Vnode_GetFsidAndInode(vnode, context);
+    *root = VirtualizationRoot_FindForVnode(vnode, *vnodeFsidInode);
+    if (!VirtualizationRoot_IsValidRootHandle(*root))
     {
-        return false;
-    }
-    else if (nullptr == (*root)->providerUserClient)
-    {
-        // There is no registered provider for this root
+        // This VNode is not part of a root
         return false;
     }
     
-    // If the calling process is the provider, we must exit right away to avoid deadlocks
     *pid = GetPid(context);
-    if (*pid == (*root)->providerPid)
+    if (VirtualizationRoot_PIDMatchesProvider(*root, *pid))
     {
+        // If the calling process is the provider, we must exit right away to avoid deadlocks
         return false;
     }
     
@@ -663,9 +741,10 @@ static bool ShouldHandleFileOpEvent(
 }
 
 static bool TrySendRequestAndWaitForResponse(
-    const VirtualizationRoot* root,
+    VirtualizationRootHandle root,
     MessageType messageType,
     const vnode_t vnode,
+    const FsidInode& vnodeFsidInode,
     const char* vnodePath,
     int pid,
     const char* procname,
@@ -685,12 +764,20 @@ static bool TrySendRequestAndWaitForResponse(
         return false;
     }
     
-    const char* relativePath = GetRelativePath(vnodePath, root->path);
+    const char* relativePath = VirtualizationRoot_GetRootRelativePath(root, vnodePath);
     
     int nextMessageId = OSIncrementAtomic(&s_nextMessageId);
     
     Message messageSpec = {};
-    Message_Init(&messageSpec, &(message.request), nextMessageId, messageType, pid, procname, relativePath);
+    Message_Init(
+        &messageSpec,
+        &(message.request),
+        nextMessageId,
+        messageType,
+        vnodeFsidInode,
+        pid,
+        procname,
+        relativePath);
 
     bool isShuttingDown = false;
     Mutex_Acquire(s_outstandingMessagesMutex);
@@ -706,7 +793,7 @@ static bool TrySendRequestAndWaitForResponse(
     
     // TODO(Mac): Should we pass in the root directly, rather than root->index?
     //            The index seems more like a private implementation detail.
-    if (!isShuttingDown && 0 != ActiveProvider_SendMessage(root->index, messageSpec))
+    if (!isShuttingDown && 0 != ActiveProvider_SendMessage(root, messageSpec))
     {
         // TODO: appropriately handle unresponsive providers
         
@@ -788,13 +875,13 @@ static void Sleep(int seconds, void* channel)
     msleep(channel, nullptr, PUSER, "io.gvfs.PrjFSKext.Sleep", &timeout);
 }
 
-static int GetPid(vfs_context_t context)
+static int GetPid(vfs_context_t _Nonnull context)
 {
     proc_t callingProcess = vfs_context_proc(context);
     return proc_pid(callingProcess);
 }
 
-static errno_t GetVNodeAttributes(vnode_t vn, vfs_context_t context, struct vnode_attr* attrs)
+static errno_t GetVNodeAttributes(vnode_t vn, vfs_context_t _Nonnull context, struct vnode_attr* attrs)
 {
     VATTR_INIT(attrs);
     VATTR_WANTED(attrs, va_flags);
@@ -802,14 +889,25 @@ static errno_t GetVNodeAttributes(vnode_t vn, vfs_context_t context, struct vnod
     return vnode_getattr(vn, attrs, context);
 }
 
-static uint32_t ReadVNodeFileFlags(vnode_t vn, vfs_context_t context)
+static bool TryReadVNodeFileFlags(vnode_t vn, vfs_context_t _Nonnull context, uint32_t* flags)
 {
     struct vnode_attr attributes = {};
+    *flags = 0;
     errno_t err = GetVNodeAttributes(vn, context, &attributes);
-    // TODO: May fail on some file system types? Perhaps we should early-out depending on mount point anyway.
-    assert(0 == err);
+    if (0 != err)
+    {
+        // TODO(Mac): May fail on some file system types? Perhaps we should early-out depending on mount point anyway.
+        // We should also consider:
+        //   - Logging this error
+        //   - Falling back on vnode lookup (or custom cache) to determine if file is in the root
+        //   - Assuming files are empty if we can't read the flags
+        
+        return false;
+    }
+    
     assert(VATTR_IS_SUPPORTED(&attributes, va_flags));
-    return attributes.va_flags;
+     *flags = attributes.va_flags;
+     return true;
 }
 
 static inline bool FileFlagsBitIsSet(uint32_t fileFlags, uint32_t bit)
@@ -818,10 +916,17 @@ static inline bool FileFlagsBitIsSet(uint32_t fileFlags, uint32_t bit)
     return 0 != (fileFlags & bit);
 }
 
-static inline bool FileIsFlaggedAsInRoot(vnode_t vnode, vfs_context_t context)
+static inline bool TryGetFileIsFlaggedAsInRoot(vnode_t vnode, vfs_context_t _Nonnull context, bool* flaggedInRoot)
 {
-    uint32_t vnodeFileFlags = ReadVNodeFileFlags(vnode, context);
-    return FileFlagsBitIsSet(vnodeFileFlags, FileFlags_IsInVirtualizationRoot);
+    uint32_t vnodeFileFlags;
+    *flaggedInRoot = false;
+    if (!TryReadVNodeFileFlags(vnode, context, &vnodeFileFlags))
+    {
+        return false;
+    }
+    
+    *flaggedInRoot = FileFlagsBitIsSet(vnodeFileFlags, FileFlags_IsInVirtualizationRoot);
+    return true;
 }
 static inline bool ActionBitIsSet(kauth_action_t action, kauth_action_t mask)
 {
@@ -841,19 +946,6 @@ static bool IsFileSystemCrawler(char* procname)
     }
     
     return false;
-}
-
-static const char* GetRelativePath(const char* path, const char* root)
-{
-    assert(strlen(path) >= strlen(root));
-    
-    const char* relativePath = path + strlen(root);
-    if (relativePath[0] == '/')
-    {
-        relativePath++;
-    }
-    
-    return relativePath;
 }
 
 static bool ShouldIgnoreVnodeType(vtype vnodeType, vnode_t vnode)

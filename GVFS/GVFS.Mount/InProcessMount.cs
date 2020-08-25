@@ -134,14 +134,15 @@ namespace GVFS.Mount
                 Console.Title = "GVFS " + ProcessHelper.GetCurrentProcessVersion() + " - " + this.enlistment.EnlistmentRoot;
 
                 this.tracer.RelatedEvent(
-                    EventLevel.Critical,
+                    EventLevel.Informational,
                     "Mount",
                     new EventMetadata
                     {
                         // Use TracingConstants.MessageKey.InfoMessage rather than TracingConstants.MessageKey.CriticalMessage
                         // as this message should not appear as an error
                         { TracingConstants.MessageKey.InfoMessage, "Virtual repo is ready" },
-                    });
+                    },
+                    Keywords.Telemetry);
 
                 this.currentState = MountState.Ready;
 
@@ -499,7 +500,7 @@ namespace GVFS.Mount
         private void MountAndStartWorkingDirectoryCallbacks(CacheServerInfo cache)
         {
             string error;
-            if (!this.context.Enlistment.Authentication.TryRefreshCredentials(this.context.Tracer, out error))
+            if (!this.context.Enlistment.Authentication.TryInitialize(this.context.Tracer, this.context.Enlistment, out error))
             {
                 this.FailMountAndExit("Failed to obtain git credentials: " + error);
             }
@@ -546,6 +547,9 @@ namespace GVFS.Mount
 
             this.heartbeat = new HeartbeatThread(this.tracer, this.fileSystemCallbacks);
             this.heartbeat.Start();
+
+            // Launch a background job to compute the multi-pack-index. Will do nothing if up-to-date.
+            this.fileSystemCallbacks.LaunchPostFetchJob(packIndexes: new List<string>());
         }
 
         private void UnmountAndStopWorkingDirectoryCallbacks()

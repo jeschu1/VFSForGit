@@ -1,4 +1,4 @@
-using GVFS.FunctionalTests.FileSystemRunners;
+﻿using GVFS.FunctionalTests.FileSystemRunners;
 using GVFS.FunctionalTests.Should;
 using GVFS.FunctionalTests.Tests.EnlistmentPerFixture;
 using GVFS.FunctionalTests.Tools;
@@ -8,13 +8,18 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 
 namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
 {
     [TestFixture]
     public class BasicFileSystemTests : TestsWithEnlistmentPerFixture
     {
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        private const int FileAttributeSparseFile = 0x00000200;
+        private const int FileAttributeReparsePoint = 0x00000400;
+        private const int FileAttributeRecallOnDataAccess = 0x00400000;
+
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void ShrinkFileContents(FileSystemRunner fileSystem, string parentFolder)
         {
             string filename = Path.Combine(parentFolder, "ShrinkFileContents");
@@ -30,7 +35,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, filename, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void GrowFileContents(FileSystemRunner fileSystem, string parentFolder)
         {
             string filename = Path.Combine(parentFolder, "GrowFileContents");
@@ -46,7 +51,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, filename, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void FilesAreBufferedAndCanBeFlushed(FileSystemRunner fileSystem, string parentFolder)
         {
             string filename = Path.Combine(parentFolder, "FilesAreBufferedAndCanBeFlushed");
@@ -73,7 +78,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             fileSystem.DeleteFile(filePath);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestFolders)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Folders))]
         [Category(Categories.WindowsOnly)]
         public void NewFileAttributesAreUpdated(string parentFolder)
         {
@@ -101,7 +106,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             virtualFile.ShouldNotExistOnDisk(fileSystem);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestFolders)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Folders))]
         [Category(Categories.WindowsOnly)]
         public void NewFolderAttributesAreUpdated(string parentFolder)
         {
@@ -152,7 +157,26 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
 
             // Ignore the archive bit as it can be re-added to the file as part of its expansion to full
             FileAttributes attributes = info.Attributes & ~FileAttributes.Archive;
-            attributes.ShouldEqual(FileAttributes.Hidden, "Attributes do not match");
+
+            int retryCount = 0;
+            int maxRetries = 10;
+            while (attributes != FileAttributes.Hidden && retryCount < maxRetries)
+            {
+                // ProjFS attributes are remoted asynchronously when files are converted to full
+                FileAttributes attributesLessProjFS = attributes & (FileAttributes)~(FileAttributeSparseFile | FileAttributeReparsePoint | FileAttributeRecallOnDataAccess);
+
+                attributesLessProjFS.ShouldEqual(
+                    FileAttributes.Hidden, 
+                    $"Attributes (ignoring ProjFS attributes) do not match, expected: {FileAttributes.Hidden} actual: {attributesLessProjFS}");
+                
+                ++retryCount;
+                Thread.Sleep(500);
+
+                info.Refresh();
+                attributes = info.Attributes & ~FileAttributes.Archive;
+            }
+                   
+            attributes.ShouldEqual(FileAttributes.Hidden, $"Attributes do not match, expected: {FileAttributes.Hidden} actual: {attributes}");
         }
 
         [TestCase]
@@ -177,7 +201,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
                 .WithInfo(testValue, testValue, testValue, FileAttributes.Hidden | FileAttributes.Directory, ignoreRecallAttributes: true);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void CannotWriteToReadOnlyFile(FileSystemRunner fileSystem, string parentFolder)
         {
             string filename = Path.Combine(parentFolder, "CannotWriteToReadOnlyFile");
@@ -204,7 +228,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, filename, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void ReadonlyCanBeSetAndUnset(FileSystemRunner fileSystem, string parentFolder)
         {
             string filename = Path.Combine(parentFolder, "ReadonlyCanBeSetAndUnset");
@@ -228,7 +252,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, filename, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void ChangeVirtualNTFSFileNameCase(FileSystemRunner fileSystem, string parentFolder)
         {
             string oldFilename = Path.Combine(parentFolder, "ChangePhysicalFileNameCase.txt");
@@ -249,7 +273,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, newFilename, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void ChangeVirtualNTFSFileName(FileSystemRunner fileSystem, string parentFolder)
         {
             string oldFilename = Path.Combine(parentFolder, "ChangePhysicalFileName.txt");
@@ -270,7 +294,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, newFilename, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void MoveVirtualNTFSFileToVirtualNTFSFolder(FileSystemRunner fileSystem, string parentFolder)
         {
             string testFolderName = Path.Combine(parentFolder, "test_folder");
@@ -300,7 +324,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, testFolderName, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileSystemRunner), FileSystemRunner.TestRunners)]
+        [TestCaseSource(typeof(FileSystemRunner), nameof(FileSystemRunner.Runners))]
         public void MoveWorkingDirectoryFileToDotGitFolder(FileSystemRunner fileSystem)
         {
             string testFolderName = ".git";
@@ -322,7 +346,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             newTestFileVirtualPath.ShouldNotExistOnDisk(fileSystem);
         }
 
-        [TestCaseSource(typeof(FileSystemRunner), FileSystemRunner.TestRunners)]
+        [TestCaseSource(typeof(FileSystemRunner), nameof(FileSystemRunner.Runners))]
         public void MoveDotGitFileToWorkingDirectoryFolder(FileSystemRunner fileSystem)
         {
             string testFolderName = "test_folder";
@@ -351,7 +375,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             this.Enlistment.GetVirtualPathTo(testFolderName).ShouldNotExistOnDisk(fileSystem);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void MoveVirtualNTFSFileToOverwriteVirtualNTFSFile(FileSystemRunner fileSystem, string parentFolder)
         {
             string targetFilename = Path.Combine(parentFolder, "TargetFile.txt");
@@ -377,7 +401,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, targetFilename, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void MoveVirtualNTFSFileToInvalidFolder(FileSystemRunner fileSystem, string parentFolder)
         {
             string testFolderName = Path.Combine(parentFolder, "test_folder");
@@ -401,7 +425,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, testFileName, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void DeletedFilesCanBeImmediatelyRecreated(FileSystemRunner fileSystem, string parentFolder)
         {
             string filename = Path.Combine(parentFolder, "DeletedFilesCanBeImmediatelyRecreated");
@@ -423,7 +447,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
         }
 
         // WindowsOnly due to differences between POSIX and Windows delete
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestCanDeleteFilesWhileTheyAreOpenRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.CanDeleteFilesWhileTheyAreOpenRunners))]
         [Category(Categories.WindowsOnly)]
         public void CanDeleteFilesWhileTheyAreOpen(FileSystemRunner fileSystem, string parentFolder)
         {
@@ -490,6 +514,8 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             virtualPath.ShouldNotExistOnDisk(fileSystem);
         }
 
+        // WindowsOnly because file timestamps on Mac are set to the time at which
+        // placeholders are written
         [TestCase]
         [Category(Categories.WindowsOnly)]
         public void ProjectedBlobFileTimesMatchHead()
@@ -538,7 +564,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             folderInfo.LastWriteTime.ShouldBeAtMost(DateTime.Now);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void NonExistentItemBehaviorIsCorrect(FileSystemRunner fileSystem, string parentFolder)
         {
             string nonExistentItem = Path.Combine(parentFolder, "BadFolderName");
@@ -560,7 +586,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             // fileSystem.ReplaceDirectoryShouldNotBeFound(nonExistentItem, true)
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void RenameEmptyVirtualNTFSFolder(FileSystemRunner fileSystem, string parentFolder)
         {
             string testFolderName = Path.Combine(parentFolder, "test_folder");
@@ -582,7 +608,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             newFolderVirtualPath.ShouldNotExistOnDisk(fileSystem);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void MoveVirtualNTFSFolderIntoVirtualNTFSFolder(FileSystemRunner fileSystem, string parentFolder)
         {
             string testFolderName = Path.Combine(parentFolder, "test_folder");
@@ -618,7 +644,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, targetFolderName, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void RenameAndMoveVirtualNTFSFolderIntoVirtualNTFSFolder(FileSystemRunner fileSystem, string parentFolder)
         {
             string testFolderName = Path.Combine(parentFolder, "test_folder");
@@ -655,7 +681,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, targetFolderName, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileSystemRunner), FileSystemRunner.TestRunners)]
+        [TestCaseSource(typeof(FileSystemRunner), nameof(FileSystemRunner.Runners))]
         public void MoveVirtualNTFSFolderTreeIntoVirtualNTFSFolder(FileSystemRunner fileSystem)
         {
             string testFolderParent = "test_folder_parent";
@@ -719,7 +745,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             this.Enlistment.GetVirtualPathTo(relativeTestFilePath).ShouldNotExistOnDisk(fileSystem);
         }
 
-        [TestCaseSource(typeof(FileSystemRunner), FileSystemRunner.TestRunners)]
+        [TestCaseSource(typeof(FileSystemRunner), nameof(FileSystemRunner.Runners))]
         public void MoveDotGitFullFolderTreeToDotGitFullFolder(FileSystemRunner fileSystem)
         {
             string testFolderRoot = ".git";
@@ -784,7 +810,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             this.Enlistment.GetVirtualPathTo(relativeTestFilePath).ShouldNotExistOnDisk(fileSystem);
         }
 
-        [TestCaseSource(typeof(FileSystemRunner), FileSystemRunner.TestRunners)]
+        [TestCaseSource(typeof(FileSystemRunner), nameof(FileSystemRunner.Runners))]
         public void DeleteIndexFileFails(FileSystemRunner fileSystem)
         {
             string indexFilePath = this.Enlistment.GetVirtualPathTo(Path.Combine(".git", "index"));
@@ -793,7 +819,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             indexFilePath.ShouldBeAFile(fileSystem);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestRunners)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Runners))]
         public void MoveVirtualNTFSFolderIntoInvalidFolder(FileSystemRunner fileSystem, string parentFolder)
         {
             string testFolderParent = Path.Combine(parentFolder, "test_folder_parent");
@@ -841,7 +867,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileRunnersAndFolders.ShouldNotExistOnDisk(this.Enlistment, fileSystem, relativeTestFilePath, parentFolder);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestFolders)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Folders))]
         [Category(Categories.WindowsOnly)]
         public void CreateFileInheritsParentDirectoryAttributes(string parentFolder)
         {
@@ -858,7 +884,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
             FileSystemRunner.DefaultRunner.DeleteDirectory(parentDirectoryPath);
         }
 
-        [TestCaseSource(typeof(FileRunnersAndFolders), FileRunnersAndFolders.TestFolders)]
+        [TestCaseSource(typeof(FileRunnersAndFolders), nameof(FileRunnersAndFolders.Folders))]
         [Category(Categories.WindowsOnly)]
         public void CreateDirectoryInheritsParentDirectoryAttributes(string parentFolder)
         {
@@ -877,10 +903,7 @@ namespace GVFS.FunctionalTests.Tests.LongRunningEnlistment
 
         private class FileRunnersAndFolders
         {
-            public const string TestFolders = "Folders";
-            public const string TestRunners = "Runners";
-            public const string TestCanDeleteFilesWhileTheyAreOpenRunners = "CanDeleteFilesWhileTheyAreOpenRunners";
-            public const string DotGitFolder = ".git";
+            private const string DotGitFolder = ".git";
 
             private static object[] allFolders =
             {

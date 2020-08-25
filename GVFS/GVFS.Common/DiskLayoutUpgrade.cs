@@ -174,7 +174,8 @@ namespace GVFS.DiskLayoutUpgrades
             GVFSEnlistment enlistment = GVFSEnlistment.CreateFromDirectory(
                 enlistmentRoot,
                 GVFSPlatform.Instance.GitInstallation.GetInstalledGitBinPath(),
-                ProcessHelper.GetCurrentProcessLocation());
+                ProcessHelper.GetCurrentProcessLocation(),
+                authentication: null);
             GitProcess git = enlistment.CreateGitProcess();
 
             foreach (string key in configSettings.Keys)
@@ -327,7 +328,7 @@ namespace GVFS.DiskLayoutUpgrades
                 tracer.AddLogFileEventListener(
                     GVFSEnlistment.GetNewGVFSLogFileName(
                         Path.Combine(enlistmentRoot, GVFSConstants.DotGVFS.LogPath),
-                        GVFSConstants.LogFileTypes.Upgrade),
+                        GVFSConstants.LogFileTypes.MountUpgrade),
                     EventLevel.Informational,
                     Keywords.Any);
 

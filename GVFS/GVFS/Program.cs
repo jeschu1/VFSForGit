@@ -1,4 +1,4 @@
-﻿using CommandLine;
+using CommandLine;
 using GVFS.CommandLine;
 using GVFS.Common;
 using GVFS.PlatformLoader;
@@ -18,6 +18,7 @@ namespace GVFS
             {
                 typeof(CacheServerVerb),
                 typeof(CloneVerb),
+                typeof(ConfigVerb),
                 typeof(DehydrateVerb),
                 typeof(DiagnoseVerb),
                 typeof(LogVerb),
@@ -27,6 +28,7 @@ namespace GVFS
                 typeof(ServiceVerb),
                 typeof(StatusVerb),
                 typeof(UnmountVerb),
+                typeof(UpgradeVerb),
             };
 
             int consoleWidth = 80;
@@ -72,12 +74,10 @@ namespace GVFS
                             clone.Execute();
                             Environment.Exit((int)ReturnCode.Success);
                         })
-                    .WithParsed<ServiceVerb>(
-                        service =>
+                    .WithParsed<GVFSVerb.ForNoEnlistment>(
+                        verb =>
                         {
-                            // The service verb doesn't operate on a repo, so it doesn't use the enlistment
-                            // path at all.
-                            service.Execute();
+                            verb.Execute();
                             Environment.Exit((int)ReturnCode.Success);
                         })
                     .WithParsed<GVFSVerb>(

@@ -22,7 +22,9 @@ namespace GVFS.Virtualization.Projection
     {
         public const string ProjectionIndexBackupName = "GVFS_projection";
 
-        protected static readonly ushort FileMode644 = Convert.ToUInt16("644", 8);
+        public static readonly ushort FileMode755 = Convert.ToUInt16("755", 8);
+        public static readonly ushort FileMode664 = Convert.ToUInt16("664", 8);
+        public static readonly ushort FileMode644 = Convert.ToUInt16("644", 8);
 
         private const int IndexFileStreamBufferSize = 512 * 1024;
 
@@ -52,9 +54,9 @@ namespace GVFS.Virtualization.Projection
         // Cache of folder paths (in Windows format) to folder data
         private ConcurrentDictionary<string, FolderData> projectionFolderCache = new ConcurrentDictionary<string, FolderData>(StringComparer.OrdinalIgnoreCase);
 
-        // nonDefaultFileModes is only populated when the platform supports file mode
-        // On platforms that support file modes, file paths that are not in nonDefaultFileModes have mode 644
-        private Dictionary<string, ushort> nonDefaultFileModes = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase);
+        // nonDefaultFileTypesAndModes is only populated when the platform supports file mode
+        // On platforms that support file modes, file paths that are not in nonDefaultFileTypesAndModes are regular files with mode 644
+        private Dictionary<string, FileTypeAndMode> nonDefaultFileTypesAndModes = new Dictionary<string, FileTypeAndMode>(StringComparer.OrdinalIgnoreCase);
 
         private BlobSizes blobSizes;
         private PlaceholderListDatabase placeholderList;
@@ -118,6 +120,15 @@ namespace GVFS.Virtualization.Projection
         {
         }
 
+        public enum FileType : short
+        {
+            Invalid,
+
+            Regular,
+            SymLink,
+            GitLink,
+        }
+
         public int EstimatedPlaceholderCount
         {
             get
@@ -152,7 +163,7 @@ namespace GVFS.Virtualization.Projection
             using (FileStream indexStream = new FileStream(this.indexPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, IndexFileStreamBufferSize))
             {
                 // Not checking the FileSystemTaskResult here because this is only for profiling
-                this.indexParser.AddMissingModifiedFiles(tracer, indexStream);
+                this.indexParser.AddMissingModifiedFilesAndRemoveThemFromPlaceholderList(tracer, indexStream);
             }
         }
 
@@ -356,24 +367,26 @@ namespace GVFS.Virtualization.Projection
             }
         }
 
-        public virtual ushort GetFilePathMode(string filePath)
+        public virtual void GetFileTypeAndMode(string filePath, out FileType fileType, out ushort fileMode)
         {
             if (!GVFSPlatform.Instance.FileSystem.SupportsFileMode)
             {
-                throw new InvalidOperationException("GetFilePathMode is only supported on GVFSPlatforms that support file mode");
+                throw new InvalidOperationException($"{nameof(this.GetFileTypeAndMode)} is only supported on GVFSPlatforms that support file mode");
             }
+
+            fileType = FileType.Regular;
+            fileMode = FileMode644;
 
             this.projectionReadWriteLock.EnterReadLock();
 
             try
             {
-                ushort fileMode;
-                if (this.nonDefaultFileModes.TryGetValue(filePath, out fileMode))
+                FileTypeAndMode fileTypeAndMode;
+                if (this.nonDefaultFileTypesAndModes.TryGetValue(filePath, out fileTypeAndMode))
                 {
-                    return fileMode;
+                    fileType = fileTypeAndMode.Type;
+                    fileMode = fileTypeAndMode.Mode;
                 }
-
-                return FileMode644;
             }
             finally
             {
@@ -516,13 +529,21 @@ namespace GVFS.Virtualization.Projection
             {
                 if (this.modifiedFilesInvalid)
                 {
-                    FileSystemTaskResult result = this.indexParser.AddMissingModifiedFiles(this.context.Tracer, this.indexFileStream);
-                    if (result == FileSystemTaskResult.Success)
+                    using (ITracer activity = this.context.Tracer.StartActivity(
+                        nameof(this.indexParser.AddMissingModifiedFilesAndRemoveThemFromPlaceholderList), 
+                        EventLevel.Informational))
                     {
-                        this.modifiedFilesInvalid = false;
-                    }
+                        FileSystemTaskResult result = this.indexParser.AddMissingModifiedFilesAndRemoveThemFromPlaceholderList(
+                            activity,
+                            this.indexFileStream);
 
-                    return result;
+                        if (result == FileSystemTaskResult.Success)
+                        {
+                            this.modifiedFilesInvalid = false;
+                        }
+
+                        return result;
+                    }
                 }
             }
             catch (IOException e)
@@ -646,33 +667,34 @@ namespace GVFS.Virtualization.Projection
 
         private void AddItemFromIndexEntry(GitIndexEntry indexEntry)
         {
-            if (indexEntry.HasSameParentAsLastEntry)
+            if (indexEntry.BuildingProjection_HasSameParentAsLastEntry)
             {
-                indexEntry.LastParent.AddChildFile(indexEntry.GetChildName(), indexEntry.Sha);
+                indexEntry.BuildingProjection_LastParent.AddChildFile(indexEntry.BuildingProjection_GetChildName(), indexEntry.Sha);
             }
             else
             {
-                if (indexEntry.NumParts == 1)
+                if (indexEntry.BuildingProjection_NumParts == 1)
                 {
-                    indexEntry.LastParent = this.rootFolderData;
-                    indexEntry.LastParent.AddChildFile(indexEntry.GetChildName(), indexEntry.Sha);
+                    indexEntry.BuildingProjection_LastParent = this.rootFolderData;
+                    indexEntry.BuildingProjection_LastParent.AddChildFile(indexEntry.BuildingProjection_GetChildName(), indexEntry.Sha);
                 }
                 else
                 {
-                    indexEntry.LastParent = this.AddFileToTree(indexEntry);
+                    indexEntry.BuildingProjection_LastParent = this.AddFileToTree(indexEntry);
                 }
             }
 
             if (GVFSPlatform.Instance.FileSystem.SupportsFileMode)
             {
-                // TODO(Mac): Test if performance could be improved by reduce this to a single check
-                // (e.g. by defaulting FileMode to 644 and eliminating the SupportsFileMode check)
-                if (indexEntry.FileMode != FileMode644)
+                // TODO(Mac): Test if performance could be improved by eliminating the SupportsFileMode check
+                // (e.g. by defaulting FileMode to Regular 644 and eliminating the SupportsFileMode check)
+                if (indexEntry.TypeAndMode.Type != FileType.Regular ||
+                    indexEntry.TypeAndMode.Mode != FileMode644)
                 {
                     // TODO(Mac): The line below causes a conversion from LazyUTF8String to .NET string.
                     // Measure the perf and memory overhead of performing this conversion, and determine if we need
                     // a way to keep the path as LazyUTF8String[]
-                    this.nonDefaultFileModes.Add(indexEntry.GetFullPath(), indexEntry.FileMode);
+                    this.nonDefaultFileTypesAndModes.Add(indexEntry.BuildingProjection_GetGitRelativePath(), indexEntry.TypeAndMode);
                 }
             }
         }
@@ -693,7 +715,7 @@ namespace GVFS.Virtualization.Projection
             SortedFolderEntries.FreePool();
             LazyUTF8String.FreePool();
             this.projectionFolderCache.Clear();
-            this.nonDefaultFileModes.Clear();
+            this.nonDefaultFileTypesAndModes.Clear();
             this.rootFolderData.ResetData(new LazyUTF8String("<root>"));
         }
 
@@ -765,21 +787,21 @@ namespace GVFS.Virtualization.Projection
         private FolderData AddFileToTree(GitIndexEntry indexEntry)
         {            
             FolderData parentFolder = this.rootFolderData;
-            for (int pathIndex = 0; pathIndex < indexEntry.NumParts - 1; ++pathIndex)
+            for (int pathIndex = 0; pathIndex < indexEntry.BuildingProjection_NumParts - 1; ++pathIndex)
             {
                 if (parentFolder == null)
                 {
                     string parentFolderName;
                     if (pathIndex > 0)
                     {
-                        parentFolderName = indexEntry.PathParts[pathIndex - 1].GetString();
+                        parentFolderName = indexEntry.BuildingProjection_PathParts[pathIndex - 1].GetString();
                     }
                     else
                     {
                         parentFolderName = this.rootFolderData.Name.GetString();
                     }
 
-                    string gitPath = indexEntry.GetFullPath();
+                    string gitPath = indexEntry.BuildingProjection_GetGitRelativePath();
 
                     EventMetadata metadata = CreateEventMetadata();
                     metadata.Add("gitPath", gitPath);
@@ -789,10 +811,10 @@ namespace GVFS.Virtualization.Projection
                     throw new InvalidDataException("Found a file (" + parentFolderName + ") where a folder was expected: " + gitPath);
                 }
 
-                parentFolder = parentFolder.ChildEntries.GetOrAddFolder(indexEntry.PathParts[pathIndex]);
+                parentFolder = parentFolder.ChildEntries.GetOrAddFolder(indexEntry.BuildingProjection_PathParts[pathIndex]);
             }
 
-            parentFolder.AddChildFile(indexEntry.PathParts[indexEntry.NumParts - 1], indexEntry.Sha);
+            parentFolder.AddChildFile(indexEntry.BuildingProjection_PathParts[indexEntry.BuildingProjection_NumParts - 1], indexEntry.Sha);
 
             return parentFolder;
         }
@@ -1089,7 +1111,7 @@ namespace GVFS.Virtualization.Projection
 
             List<PlaceholderListDatabase.PlaceholderData> placeholderFilesListCopy;
             List<PlaceholderListDatabase.PlaceholderData> placeholderFoldersListCopy;
-            this.placeholderList.GetAllEntries(out placeholderFilesListCopy, out placeholderFoldersListCopy);
+            this.placeholderList.GetAllEntriesAndPrepToWriteAllEntries(out placeholderFilesListCopy, out placeholderFoldersListCopy);
 
             EventMetadata metadata = new EventMetadata();
             metadata.Add("File placeholder count", placeholderFilesListCopy.Count);
@@ -1144,8 +1166,11 @@ namespace GVFS.Virtualization.Projection
                         new HashSet<string>(placeholderFoldersListCopy.Select(x => x.Path), StringComparer.OrdinalIgnoreCase) : 
                         null;
                     
-                    // Order the folders in decscending order so that we walk the tree from bottom up (ensuring child folders are deleted before
-                    // their parents)
+                    // Order the folders in decscending order so that we walk the tree from bottom up.
+                    // Traversing the folders in this order:
+                    //  1. Ensures child folders are deleted before their parents
+                    //  2. Ensures that folders that have been deleted by git (but are still in the projection) are found before their
+                    //     parent folder is re-expanded (only applies on platforms where EnumerationExpandsDirectories is true)
                     foreach (PlaceholderListDatabase.PlaceholderData folderPlaceholder in placeholderFoldersListCopy.OrderByDescending(x => x.Path))
                     {
                         // Remove folder placeholders before re-expansion to ensure that projection changes that convert a folder to a file work
@@ -1374,28 +1399,42 @@ namespace GVFS.Virtualization.Projection
                     childRelativePath = relativeFolderPath + Path.DirectorySeparatorChar + childEntry.Name.GetString();
                 }
 
-                // TODO(Mac): Issue #245, handle failures of WritePlaceholderDirectory and WritePlaceholderFile         
-                if (childEntry.IsFolder)
+                bool newChild = childEntry.IsFolder ? !existingFolderPlaceholders.Contains(childRelativePath) : !updatedPlaceholderList.ContainsKey(childRelativePath);
+
+                if (newChild)
                 {
-                    if (!existingFolderPlaceholders.Contains(childRelativePath))
+                    FileSystemResult result;
+                    string fileShaOrFolderValue;
+                    if (childEntry.IsFolder)
                     {
-                        this.fileSystemVirtualizer.WritePlaceholderDirectory(childRelativePath);                    
-                        updatedPlaceholderList.TryAdd(
-                            childRelativePath, 
-                            new PlaceholderListDatabase.PlaceholderData(childRelativePath, PlaceholderListDatabase.PartialFolderValue));
+                        fileShaOrFolderValue = PlaceholderListDatabase.PartialFolderValue;
+                        result = this.fileSystemVirtualizer.WritePlaceholderDirectory(childRelativePath);
                     }
-                }
-                else
-                {
-                    if (!updatedPlaceholderList.ContainsKey(childRelativePath))
+                    else
                     {
                         FileData childFileData = childEntry as FileData;
-                        string sha = childFileData.Sha.ToString();
+                        fileShaOrFolderValue = childFileData.Sha.ToString();
+                        result = this.fileSystemVirtualizer.WritePlaceholderFile(childRelativePath, childFileData.Size, fileShaOrFolderValue);
+                    }
 
-                        this.fileSystemVirtualizer.WritePlaceholderFile(childRelativePath, childFileData.Size, sha);
-                        updatedPlaceholderList.TryAdd(
-                            childRelativePath, 
-                            new PlaceholderListDatabase.PlaceholderData(childRelativePath, sha));
+                    switch (result.Result)
+                    {
+                        case FSResult.Ok:
+                            updatedPlaceholderList.TryAdd(
+                                childRelativePath,
+                                new PlaceholderListDatabase.PlaceholderData(childRelativePath, fileShaOrFolderValue));
+                            break;
+
+                        case FSResult.FileOrPathNotFound:
+                            // Git command must have removed the folder being re-expanded (relativeFolderPath)
+                            // Remove the folder from existingFolderPlaceholders so that its parent will create
+                            // it again (when it's re-expanded)
+                            existingFolderPlaceholders.Remove(relativeFolderPath);
+                            return;
+
+                        default:
+                            // TODO(Mac): Issue #245, handle failures of WritePlaceholderDirectory and WritePlaceholderFile
+                            break;
                     }
                 }
             }

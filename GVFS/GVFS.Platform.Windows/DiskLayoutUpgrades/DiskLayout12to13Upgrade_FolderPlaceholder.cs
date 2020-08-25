@@ -48,7 +48,7 @@ namespace GVFS.Platform.Windows.DiskLayoutUpgrades
                         .Select(x => x.Substring(workingDirectoryRoot.Length + 1))
                         .Select(x => new PlaceholderListDatabase.PlaceholderData(x, GVFSConstants.AllZeroSha));
 
-                    List<PlaceholderListDatabase.PlaceholderData> placeholderEntries = placeholders.GetAllEntries();
+                    List<PlaceholderListDatabase.PlaceholderData> placeholderEntries = placeholders.GetAllEntriesAndPrepToWriteAllEntries();
                     placeholderEntries.AddRange(folderPlaceholderPaths);
 
                     placeholders.WriteAllEntriesAndFlush(placeholderEntries);
@@ -75,7 +75,7 @@ namespace GVFS.Platform.Windows.DiskLayoutUpgrades
 
         private static IEnumerable<string> GetFolderPlaceholdersFromDisk(ITracer tracer, PhysicalFileSystem fileSystem, string path)
         {
-            if (!fileSystem.IsSymlink(path))
+            if (!fileSystem.IsSymLink(path))
             {
                 foreach (string directory in fileSystem.EnumerateDirectories(path))
                 {

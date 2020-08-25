@@ -37,7 +37,7 @@ namespace GVFS.CommandLine
         public bool SkipMountedCheck { get; set; }
         public bool SkipVersionCheck { get; set; }
         public CacheServerInfo ResolvedCacheServer { get; set; }
-        public GVFSConfig DownloadedGVFSConfig { get; set; }
+        public ServerGVFSConfig DownloadedGVFSConfig { get; set; }
 
         protected override string VerbName
         {
@@ -117,7 +117,14 @@ namespace GVFS.CommandLine
 
                 if (!GVFSPlatform.Instance.KernelDriver.IsReady(tracer, enlistment.EnlistmentRoot, out errorMessage))
                 {
-                    tracer.RelatedInfo($"{nameof(MountVerb)}.{nameof(this.Execute)}: Enabling and attaching ProjFS through service");
+                    tracer.RelatedEvent(
+                        EventLevel.Informational,
+                            $"{nameof(MountVerb)}_{nameof(this.Execute)}_EnablingKernelDriverViaService",
+                            new EventMetadata
+                            {
+                                { "KernelDriver.IsReady_Error", errorMessage },
+                                { TracingConstants.MessageKey.InfoMessage, "Service will retry" }
+                            });
 
                     if (!this.ShowStatusWhileRunning(
                         () => { return this.TryEnableAndAttachPrjFltThroughService(enlistment.EnlistmentRoot, out errorMessage); },
@@ -128,36 +135,34 @@ namespace GVFS.CommandLine
                 }
 
                 RetryConfig retryConfig = null;
-                GVFSConfig gvfsConfig = this.DownloadedGVFSConfig;
+                ServerGVFSConfig serverGVFSConfig = this.DownloadedGVFSConfig;
                 if (!this.SkipVersionCheck)
                 {
-                    string authErrorMessage = null;
-                    if (!this.ShowStatusWhileRunning(
-                        () => enlistment.Authentication.TryRefreshCredentials(tracer, out authErrorMessage),
-                        "Authenticating"))
+                    string authErrorMessage;
+                    if (!this.TryAuthenticate(tracer, enlistment, out authErrorMessage))
                     {
                         this.Output.WriteLine("    WARNING: " + authErrorMessage);
                         this.Output.WriteLine("    Mount will proceed, but new files cannot be accessed until GVFS can authenticate.");
                     }
 
-                    if (gvfsConfig == null)
+                    if (serverGVFSConfig == null)
                     {
                         if (retryConfig == null)
                         {
                             retryConfig = this.GetRetryConfig(tracer, enlistment);
                         }
 
-                        gvfsConfig = this.QueryGVFSConfig(tracer, enlistment, retryConfig);
+                        serverGVFSConfig = this.QueryGVFSConfig(tracer, enlistment, retryConfig);
                     }
 
-                    this.ValidateClientVersions(tracer, enlistment, gvfsConfig, showWarnings: true);
+                    this.ValidateClientVersions(tracer, enlistment, serverGVFSConfig, showWarnings: true);
 
                     CacheServerResolver cacheServerResolver = new CacheServerResolver(tracer, enlistment);
-                    cacheServer = cacheServerResolver.ResolveNameFromRemote(cacheServer.Url, gvfsConfig);
+                    cacheServer = cacheServerResolver.ResolveNameFromRemote(cacheServer.Url, serverGVFSConfig);
                     this.Output.WriteLine("Configured cache server: " + cacheServer);
                 }
 
-                this.InitializeLocalCacheAndObjectsPaths(tracer, enlistment, retryConfig, gvfsConfig, cacheServer);
+                this.InitializeLocalCacheAndObjectsPaths(tracer, enlistment, retryConfig, serverGVFSConfig, cacheServer);
 
                 if (!this.ShowStatusWhileRunning(
                     () => { return this.PerformPreMountValidation(tracer, enlistment, out mountExecutableLocation, out errorMessage); },

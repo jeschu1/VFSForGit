@@ -1,5 +1,6 @@
 ﻿using GVFS.FunctionalTests.Properties;
 using GVFS.Tests.Should;
+using NUnit.Framework;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -19,12 +20,20 @@ namespace GVFS.FunctionalTests.Tools
         private const string LockHolderCommandName = @"GVFS.FunctionalTests.LockHolder";
         private const string LockHolderCommand = @"GVFS.FunctionalTests.LockHolder.exe";
 
+        private const string WindowsPathSeparator = "\\";
+        private const string GitPathSeparator = "/";
+
         private static string LockHolderCommandPath
         {
             get
             {
                 return Path.Combine(Settings.Default.CurrentDirectory, LockHolderCommand);
             }
+        }
+
+        public static string ConvertPathToGitFormat(string relativePath)
+        {
+            return relativePath.Replace(WindowsPathSeparator, GitPathSeparator);
         }
 
         public static void CheckGitCommand(string virtualRepoRoot, string command, params string[] expectedLinesInResult)
@@ -174,28 +183,37 @@ namespace GVFS.FunctionalTests.Tools
                 {
                     resetEvent.Wait(resetTimeout);
 
-                    // Make sure to let the holding process end.
-                    if (stdin != null)
+                    try
                     {
-                        stdin.WriteLine(stdinToQuit);
-                        stdin.Close();
-                    }
-
-                    if (holdingProcess != null)
-                    {
-                        bool holdingProcessHasExited = holdingProcess.WaitForExit(10000);
-
-                        if (!holdingProcess.HasExited)
+                        // Make sure to let the holding process end.
+                        if (stdin != null)
                         {
-                            holdingProcess.Kill();
+                            stdin.WriteLine(stdinToQuit);
+                            stdin.Close();
                         }
 
-                        holdingProcess.Dispose();
+                        if (holdingProcess != null)
+                        {
+                            bool holdingProcessHasExited = holdingProcess.WaitForExit(10000);
 
-                        holdingProcessHasExited.ShouldBeTrue("Locking process did not exit in time.");
+                            if (!holdingProcess.HasExited)
+                            {
+                                holdingProcess.Kill();
+                            }
+
+                            holdingProcess.Dispose();
+
+                            holdingProcessHasExited.ShouldBeTrue("Locking process did not exit in time.");
+                        }
                     }
-
-                    resetEvent.Set();
+                    catch (Exception ex)
+                    {
+                        Assert.Fail($"{nameof(RunCommandWithWaitAndStdIn)} exception closing stdin {ex.ToString()}");
+                    }
+                    finally
+                    {
+                        resetEvent.Set();
+                    }
                 });
 
             return resetEvent;

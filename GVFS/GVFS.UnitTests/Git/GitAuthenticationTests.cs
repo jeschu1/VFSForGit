@@ -16,6 +16,7 @@ namespace GVFS.UnitTests.Git
             MockGitProcess gitProcess = this.GetGitProcess();
 
             GitAuthentication dut = new GitAuthentication(gitProcess, "mock://repoUrl");
+            dut.TryInitializeAndRequireAuth(tracer, out _);
 
             string authString;
             string error;
@@ -40,6 +41,7 @@ namespace GVFS.UnitTests.Git
             MockGitProcess gitProcess = this.GetGitProcess();
 
             GitAuthentication dut = new GitAuthentication(gitProcess, "mock://repoUrl");
+            dut.TryInitializeAndRequireAuth(tracer, out _);
 
             string authString;
             string error;
@@ -61,6 +63,7 @@ namespace GVFS.UnitTests.Git
             MockGitProcess gitProcess = this.GetGitProcess();
 
             GitAuthentication dut = new GitAuthentication(gitProcess, "mock://repoUrl");
+            dut.TryInitializeAndRequireAuth(tracer, out _);
 
             string authString;
             string error;
@@ -79,37 +82,14 @@ namespace GVFS.UnitTests.Git
         }
 
         [TestCase]
-        public void GitProcessFailuresAreRetried()
-        {
-            MockTracer tracer = new MockTracer();
-            MockGitProcess gitProcess = this.GetGitProcess();
-
-            GitAuthentication dut = new GitAuthentication(gitProcess, "mock://repoUrl");
-
-            string authString;
-            string error;
-
-            gitProcess.ShouldFail = true;
-
-            dut.TryGetCredentials(tracer, out authString, out error).ShouldEqual(false, "Succeeded despite GitProcess returning failure");
-
-            // Reboke should be a no-op as valid credentials have not been stored
-            dut.Revoke(authString);
-            dut.IsBackingOff.ShouldEqual(false, "Should not backoff if there were no credentials to revoke");
-
-            gitProcess.ShouldFail = false;
-
-            dut.TryGetCredentials(tracer, out authString, out error).ShouldEqual(true, "Failed to get credential on retry");
-        }
-
-        [TestCase]
         public void TwoThreadsFailAtOnceStillRetriesOnce()
         {
             MockTracer tracer = new MockTracer();
             MockGitProcess gitProcess = this.GetGitProcess();
 
             GitAuthentication dut = new GitAuthentication(gitProcess, "mock://repoUrl");
-            
+            dut.TryInitializeAndRequireAuth(tracer, out _);
+
             string authString;
             string error;
 
@@ -133,6 +113,7 @@ namespace GVFS.UnitTests.Git
             MockGitProcess gitProcess = this.GetGitProcess();
 
             GitAuthentication dut = new GitAuthentication(gitProcess, "mock://repoUrl");
+            dut.TryInitializeAndRequireAuth(tracer, out _);
 
             string thread1Auth;
             string thread2Auth;
@@ -162,6 +143,7 @@ namespace GVFS.UnitTests.Git
             MockGitProcess gitProcess = this.GetGitProcess();
 
             GitAuthentication dut = new GitAuthentication(gitProcess, "mock://repoUrl");
+            dut.TryInitializeAndRequireAuth(tracer, out _);
 
             string thread1Auth;
             string thread2Auth;
@@ -194,7 +176,7 @@ namespace GVFS.UnitTests.Git
 
             int revocations = 0;
             gitProcess.SetExpectedCommandResult(
-                "credential fill",
+                "-c credential.useHttpPath=true credential fill",
                 () => new GitProcess.Result("username=username\r\npassword=password" + revocations + "\r\n", string.Empty, GitProcess.Result.SuccessCode));
 
             gitProcess.SetExpectedCommandResult(

@@ -1,6 +1,7 @@
 ﻿using GVFS.Common.Tracing;
 using Newtonsoft.Json;
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 
@@ -16,9 +17,10 @@ namespace GVFS.Common.Http
             this.repoUrl = enlistment.RepoUrl;
         }
 
-        public bool TryQueryGVFSConfig(out GVFSConfig gvfsConfig)
+        public bool TryQueryGVFSConfig(bool logErrors, out ServerGVFSConfig serverGVFSConfig, out HttpStatusCode? httpStatus)
         {
-            gvfsConfig = null;
+            serverGVFSConfig = null;
+            httpStatus = null;
 
             Uri gvfsConfigEndpoint;
             string gvfsConfigEndpointString = this.repoUrl + GVFSConstants.Endpoints.GVFSConfig;
@@ -38,10 +40,14 @@ namespace GVFS.Common.Http
             }
 
             long requestId = HttpRequestor.GetNewRequestId();
-            RetryWrapper<GVFSConfig> retrier = new RetryWrapper<GVFSConfig>(this.RetryConfig.MaxAttempts, CancellationToken.None);
-            retrier.OnFailure += RetryWrapper<GVFSConfig>.StandardErrorHandler(this.Tracer, requestId, "QueryGvfsConfig");
+            RetryWrapper<ServerGVFSConfig> retrier = new RetryWrapper<ServerGVFSConfig>(this.RetryConfig.MaxAttempts, CancellationToken.None);
 
-            RetryWrapper<GVFSConfig>.InvocationResult output = retrier.Invoke(
+            if (logErrors)
+            {
+                retrier.OnFailure += RetryWrapper<ServerGVFSConfig>.StandardErrorHandler(this.Tracer, requestId, "QueryGvfsConfig");
+            }
+
+            RetryWrapper<ServerGVFSConfig>.InvocationResult output = retrier.Invoke(
                 tryCount =>
                 {
                     using (GitEndPointResponseData response = this.SendRequest(
@@ -53,26 +59,33 @@ namespace GVFS.Common.Http
                     {
                         if (response.HasErrors)
                         {
-                            return new RetryWrapper<GVFSConfig>.CallbackResult(response.Error, response.ShouldRetry);
+                            return new RetryWrapper<ServerGVFSConfig>.CallbackResult(response.Error, response.ShouldRetry);
                         }
 
                         try
                         {
                             string configString = response.RetryableReadToEnd();
-                            GVFSConfig config = JsonConvert.DeserializeObject<GVFSConfig>(configString);
-                            return new RetryWrapper<GVFSConfig>.CallbackResult(config);
+                            ServerGVFSConfig config = JsonConvert.DeserializeObject<ServerGVFSConfig>(configString);
+                            return new RetryWrapper<ServerGVFSConfig>.CallbackResult(config);
                         }
                         catch (JsonReaderException e)
                         {
-                            return new RetryWrapper<GVFSConfig>.CallbackResult(e, shouldRetry: false);
+                            return new RetryWrapper<ServerGVFSConfig>.CallbackResult(e, shouldRetry: false);
                         }
                     }
                 });
 
             if (output.Succeeded)
             {
-                gvfsConfig = output.Result;
+                serverGVFSConfig = output.Result;
+                httpStatus = HttpStatusCode.OK;
                 return true;
+            }
+
+            GitObjectsHttpException httpException = output.Error as GitObjectsHttpException;
+            if (httpException != null)
+            {
+                httpStatus = httpException.StatusCode;
             }
 
             return false;

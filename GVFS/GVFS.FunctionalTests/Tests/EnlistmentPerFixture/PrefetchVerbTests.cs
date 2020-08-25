@@ -42,7 +42,6 @@ namespace GVFS.FunctionalTests.Tests.EnlistmentPerFixture
         }
 
         [TestCase, Order(4)]
-        [Category(Categories.MacTODO.M4)]
         public void PrefetchByFileExtensionWithHydrate()
         {
             int expectedCount = 3;
@@ -52,7 +51,6 @@ namespace GVFS.FunctionalTests.Tests.EnlistmentPerFixture
         }
 
         [TestCase, Order(5)]
-        [Category(Categories.MacTODO.M4)]
         public void PrefetchByFilesWithHydrateWhoseObjectsAreAlreadyDownloaded()
         {
             int expectedCount = 2;
@@ -131,18 +129,24 @@ namespace GVFS.FunctionalTests.Tests.EnlistmentPerFixture
             string objectDir = this.Enlistment.GetObjectRoot(this.fileSystem);
             string postFetchLock = Path.Combine(objectDir, "post-fetch.lock");
 
-            while (this.fileSystem.FileExists(postFetchLock))
+            // Wait first, to hopefully ensure the background thread has
+            // started before we check for the lock file.
+            do
             {
                 Thread.Sleep(500);
             }
+            while (this.fileSystem.FileExists(postFetchLock));
 
-            ProcessResult midxResult = GitProcess.InvokeProcess(this.Enlistment.RepoRoot, "midx --read --pack-dir=\"" + objectDir + "/pack\"");
+            ProcessResult midxResult = GitProcess.InvokeProcess(this.Enlistment.RepoRoot, "multi-pack-index verify --object-dir=\"" + objectDir + "\"");
             midxResult.ExitCode.ShouldEqual(0);
-            midxResult.Output.ShouldContain("4d494458"); // Header from midx file.
 
-            ProcessResult graphResult = GitProcess.InvokeProcess(this.Enlistment.RepoRoot, "commit-graph read --object-dir=\"" + objectDir + "\"");
-            graphResult.ExitCode.ShouldEqual(0);
-            graphResult.Output.ShouldContain("43475048"); // Header from commit-graph file.
+            // A commit graph is not always generated, but if it is, then we want to ensure it is in a good state
+            if (this.fileSystem.FileExists(Path.Combine(objectDir, "info", "commit-graph")))
+            {
+                ProcessResult graphResult = GitProcess.InvokeProcess(this.Enlistment.RepoRoot, "commit-graph read --object-dir=\"" + objectDir + "\"");
+                graphResult.ExitCode.ShouldEqual(0);
+                graphResult.Output.ShouldContain("43475048"); // Header from commit-graph file.
+            }
         }
     }
 }

@@ -27,9 +27,12 @@ namespace GVFS.Virtualization.Background
             OnFolderRenamed,
             OnFolderDeleted,
             OnFolderFirstWrite,
-            OnIndexWriteWithoutProjectionChange,
+            OnIndexWriteRequiringModifiedPathsValidation,
             OnPlaceholderCreationsBlockedForGit,
-            OnFileHardLinkCreated
+            OnFileHardLinkCreated,
+            OnFilePreDelete,
+            OnFolderPreDelete,
+            OnFileSymLinkCreated,
         }
 
         public OperationType Operation { get; }
@@ -52,9 +55,19 @@ namespace GVFS.Virtualization.Background
             return new FileSystemTask(OperationType.OnFileHardLinkCreated, newLinkRelativePath, oldVirtualPath: null);
         }
 
+        public static FileSystemTask OnFileSymLinkCreated(string newLinkRelativePath)
+        {
+            return new FileSystemTask(OperationType.OnFileSymLinkCreated, newLinkRelativePath, oldVirtualPath: null);
+        }
+
         public static FileSystemTask OnFileDeleted(string virtualPath)
         {
             return new FileSystemTask(OperationType.OnFileDeleted, virtualPath, oldVirtualPath: null);
+        }
+
+        public static FileSystemTask OnFilePreDelete(string virtualPath)
+        {
+            return new FileSystemTask(OperationType.OnFilePreDelete, virtualPath, oldVirtualPath: null);
         }
 
         public static FileSystemTask OnFileOverwritten(string virtualPath)
@@ -97,9 +110,14 @@ namespace GVFS.Virtualization.Background
             return new FileSystemTask(OperationType.OnFolderDeleted, virtualPath, oldVirtualPath: null);
         }
 
-        public static FileSystemTask OnIndexWriteWithoutProjectionChange()
+        public static FileSystemTask OnFolderPreDelete(string virtualPath)
         {
-            return new FileSystemTask(OperationType.OnIndexWriteWithoutProjectionChange, virtualPath: null, oldVirtualPath: null);
+            return new FileSystemTask(OperationType.OnFolderPreDelete, virtualPath, oldVirtualPath: null);
+        }
+
+        public static FileSystemTask OnIndexWriteRequiringModifiedPathsValidation()
+        {
+            return new FileSystemTask(OperationType.OnIndexWriteRequiringModifiedPathsValidation, virtualPath: null, oldVirtualPath: null);
         }
 
         public static FileSystemTask OnPlaceholderCreationsBlockedForGit()
