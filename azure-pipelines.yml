@@ -9,5 +9,7 @@ pr:
 pool: github
 
 steps:
+- checkout: self 
+  clean: true
 - script: echo Hello, world!
   displayName: 'Run a one-line script'
